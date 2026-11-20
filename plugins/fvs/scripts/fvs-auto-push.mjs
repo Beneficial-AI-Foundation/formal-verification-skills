@@ -16,8 +16,10 @@
 //     core.worktree setting that points at another repository's files is refused);
 //   - `refs/heads/<name>` exists as a branch under a recorded namespace (fvs/...), is not a symbolic ref, and no tag
 //     of the same name exists;
-//   - no url.<base>.insteadOf or url.<base>.pushInsteadOf rule applies to the recorded URL, and no
-//     [remote "<url>"] section names it, and git itself does not rewrite it.
+//   - every url.<base>.insteadOf or url.<base>.pushInsteadOf rule that applies to the recorded URL sends it to the same
+//     destination (host and OWNER/REPO, over https or ssh, see `sameDestination`), no [remote "<url>"] section names
+//     it, and git itself rewrites it to nothing else. A remote that holds the destination with user information in an
+//     http or https address (a token) is the address the push uses (`configuredAddress`), and what git prints is cleaned of it.
 // Every git call that acts on the repository (the branch checks, the URL checks, the tip read and the push) names the git
 // directory and the work tree that were found and checked, so none of them finds a repository again from a directory.
 // Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
@@ -53,7 +55,7 @@ export const CONTRACT = {
   checks: [
     'It takes exactly --branch <name> and refuses anything else on its command line.',
     'It compares the shared git directory of the repository it runs in with the one recorded for the destination, and refuses when they differ or when a work tree points at another repository.',
-    'It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to that address. A rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed: the record holds the address without user information, and no message, record or receipt shows it.',
+    'It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to the same host and OWNER/REPO, or over any scheme but https or ssh (ssh:// or git@host:OWNER/REPO), or to another port. A rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed, and so is a rule that changes the address between https, ssh:// and git@host:OWNER/REPO on the same host and OWNER/REPO: the record holds the address without user information, and no message, record or receipt shows it.',
   ],
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
@@ -65,6 +67,7 @@ export const CONTRACT = {
     'ssh and other transport wrappers (GIT_SSH_COMMAND, core.sshCommand, proxy and remote helpers): the command cannot tell where one of them sends the push.',
     'Credential helpers.',
     'The git configuration variables whose names you trusted at init, the way you trust your own git configuration files: whatever value they have when the command runs is used for the checks and for the push.',
+    'The address that a remote of the repository holds with user information (a token) for the recorded host and OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration keeps working. The record, the messages and the receipt never show the token, and the command removes it from what git prints. As with any git push, the address and its token are visible in the process arguments of the local machine while git runs.',
     'URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.',
     'The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission rule, and so change where the command pushes or what it checks.',
     'The git program found on PATH.',
@@ -82,11 +85,53 @@ export const contractText = () => `The push command is ${CONTRACT.kind}. ${CONTR
 // without that part too. The user name of an ssh address (git@host) is not a secret and stays.
 const embedsCredential = (url) => /^https?:\/\/[^/]*@/i.test(String(url).trim());
 export const stripCredential = (url) => String(url).trim().replace(/^(https?:\/\/)[^/]*@/i, '$1');
-// The same, for deciding whether a rule only adds user information: the user part must be plain. Git and curl end the host
-// at "/", "?", "#" and a backslash, so http://host:1#@other:2/ is the address host:1 and not user information for
-// other:2. Anything else than a plain user part is left in the address, which then differs from the recorded one.
-const withoutPlainUserInfo = (url) => String(url).trim().replace(/^(https?:\/\/)[^/?#\\@\s]+@/i, '$1');
 export const scrub = (text) => String(text).replace(/(https?:\/\/)[^/\s"']*@/gi, '$1***@');
+
+// OWNER/REPO of the path of an address, or null when the path does not name exactly one repository.
+const repoOf = (pathPart) => {
+  const segments = pathPart.replace(/\/+$/, '').replace(/\.git$/, '').split('/');
+  return segments.length === 2 && segments.every((part) => /^[A-Za-z0-9._-]+$/.test(part)) ? segments.join('/') : null;
+};
+
+// The scheme, host, port and OWNER/REPO of an address, read the strict way, or null when any part is unusual. It is how
+// a rewrite rule is judged: whether two spellings are one destination. Git and curl end the host at "/", "?", "#" and a
+// backslash, so in http://host:1#@other:2/ the request goes to host:1, and such an address is null here, not user
+// information for other:2. The user part must be plain (no "/", "?", "#", "\" or "@"), is not part of the result, and
+// has no ":" in an ssh address. The forms are https://, http://, ssh:// and the scp-like git@host:OWNER/REPO.
+// A port is null when it is absent or the default of the scheme.
+const HOST = String.raw`(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])`;
+const DEFAULT_PORT = { http: '80', https: '443', ssh: '22' };
+export function addressOf(url) {
+  const text = String(url).trim();
+  if (text.startsWith('-') || /[\\\s\x00-\x1f\x7f]/.test(text)) return null;
+  const scheme = new RegExp(`^(https?|ssh)://(?:([^/?#@]+)@)?(${HOST})(?::(\\d{1,5}))?/([^?#]*)$`, 'i').exec(text);
+  let found = null;
+  if (scheme) {
+    if (scheme[1].toLowerCase() === 'ssh' && scheme[2]?.includes(':')) return null;
+    found = { scheme: scheme[1].toLowerCase(), host: scheme[3], port: scheme[4] ?? null, path: scheme[5] };
+  } else {
+    const scp = /^(?:[^@/\s:?#]+@)?([A-Za-z0-9.-]+):(?!\/\/)(.+)$/.exec(text);
+    if (scp) found = { scheme: 'ssh', host: scp[1], port: null, path: scp[2] };
+  }
+  const repo = found && repoOf(found.path);
+  if (!repo) return null;
+  return { scheme: found.scheme, host: found.host.toLowerCase(), port: found.port === DEFAULT_PORT[found.scheme] ? null : found.port, repo };
+}
+
+// Two spellings of one destination: the same host and OWNER/REPO, over the same scheme and port, or over https and ssh
+// (ssh:// and git@host:OWNER/REPO are both ssh) on their default ports, since an insteadOf rule between those is how a
+// project's clone URL is commonly turned into the one its sandbox can reach. http stays http, and any other scheme
+// (file://, git://, ext::, fd::, a local path) is no spelling of a destination.
+export function sameDestination(a, b) {
+  const one = String(a).trim();
+  const two = String(b).trim();
+  if (one === two) return true;
+  const x = addressOf(one);
+  const y = addressOf(two);
+  if (!x || !y || x.host !== y.host || x.repo !== y.repo) return false;
+  if (x.scheme === y.scheme) return x.port === y.port;
+  return x.scheme !== 'http' && y.scheme !== 'http' && x.port === null && y.port === null;
+}
 
 // Host and OWNER/REPO of a git URL, or null when the URL does not name exactly one repository on one host
 // (a local path, a file URL, a path with more or fewer than two segments).
@@ -207,9 +252,11 @@ function git(args, { cwd, where, env, stdio } = {}) {
 }
 
 // Git rewrites a URL given to push by the longest matching url.<base>.insteadOf or url.<base>.pushInsteadOf prefix,
-// and the push then goes to the rewritten address. Instead of predicting which rule wins, any rule that applies to the
-// recorded URL is a refusal. A [remote "<url>"] section is refused too: git does not read one for a URL with a slash,
-// but a refusal costs nothing and keeps the check independent of that detail. Returns null or a plain message.
+// and the push then goes to the rewritten address. Instead of predicting which rule wins, every rule that applies to the
+// address must send it to the same destination (see `sameDestination`: a rule that only adds user information, or
+// moves it between https and ssh, is allowed), and any other rule is a refusal. A [remote "<url>"] section is refused
+// too: git does not read one for a URL with a slash, but a refusal costs nothing and keeps the check independent of that
+// detail. Returns null or a plain message.
 export function rewriteProblem(where, url, env) {
   const list = git(['config', '--list', '-z'], { where, env });
   if (list.status !== 0) return `git config could not be read (${list.stderr || list.error?.message || `exit ${list.status}`})`;
@@ -219,16 +266,62 @@ export function rewriteProblem(where, url, env) {
     const value = at < 0 ? '' : entry.slice(at + 1);
     const rewrite = /^url\.(.+)\.(insteadof|pushinsteadof)$/.exec(key);
     if (rewrite && url.startsWith(value)) {
-      // A rule that sends the address to the same address with user information added is how a token is injected.
-      if (withoutPlainUserInfo(rewrite[1] + url.slice(value.length)) === url) continue;
+      if (sameDestination(rewrite[1] + url.slice(value.length), url)) continue;
       return scrub(`the git setting ${key} = ${JSON.stringify(value)} would rewrite the recorded destination ${url}`);
     }
     const remote = /^remote\.(.+)\.[^.]+$/.exec(key);
     if (remote && remote[1] === url) return scrub(`the git setting ${key} names the recorded destination as a remote`);
   }
   const shown = git(['ls-remote', '--get-url', url], { where, env });
-  if (shown.status !== 0 || withoutPlainUserInfo(shown.stdout) !== url) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
+  if (shown.status !== 0 || !sameDestination(shown.stdout, url)) return scrub(`git reads the recorded destination ${url} as ${shown.stdout.trim() || '(unreadable)'}`);
   return null;
+}
+
+// A sandbox often clones with a token in the address of the remote (https://x-access-token:TOKEN@host/OWNER/REPO). The
+// record holds that address without it, so the push uses the address the repository itself holds when it is an http or
+// https address with user information for the recorded host and OWNER/REPO (`sameDestination`), and the token in the
+// user's own configuration keeps working. A remote with push URLs is read through them only, as git does. Returns that
+// address, or null when no remote holds one; two different ones leave no way to know which is meant, and are refused.
+export function configuredAddress(where, record, env) {
+  const list = git(['config', '--list', '-z'], { where, env });
+  if (list.status !== 0) refuse('destination-rewritten', `git config could not be read (${list.stderr || list.error?.message || `exit ${list.status}`})`);
+  const remotes = new Map();
+  for (const entry of list.stdout.split('\0').filter(Boolean)) {
+    const at = entry.indexOf('\n');
+    const named = /^remote\.(.+)\.(url|pushurl)$/.exec(at < 0 ? entry : entry.slice(0, at));
+    if (!named) continue;
+    const slot = remotes.get(named[1]) ?? { url: [], pushurl: [] };
+    slot[named[2]].push(at < 0 ? '' : entry.slice(at + 1));
+    remotes.set(named[1], slot);
+  }
+  const held = new Map();
+  for (const [name, slot] of remotes) {
+    for (const value of slot.pushurl.length ? slot.pushurl : slot.url) {
+      if (/^https?:\/\/[^/]*@/i.test(value) && sameDestination(value, record.url)) held.set(value, [...(held.get(value) ?? []), name]);
+    }
+  }
+  if (held.size > 1) refuse('remote-ambiguous', `the remotes ${[...held.values()].flat().join(', ')} hold different addresses with user information for ${record.host}/${record.repo}; keep one of them, so that the command knows which address to push to`);
+  return [...held.keys()][0] ?? null;
+}
+
+// What must not appear in an output of the command when a push used an address with user information: that part of the
+// address, its user name and password and their percent-decoded forms, and the base64 of the pair that an
+// Authorization header carries. Shorter than four characters is no token, and replacing it would only garble the text.
+export function secretsOf(url) {
+  const info = /^https?:\/\/([^/?#@]+)@/i.exec(String(url))?.[1];
+  const decode = (text) => { try { return decodeURIComponent(text); } catch { return text; } };
+  if (!info || decode(info).length < 4) return [];
+  const [user, ...rest] = info.split(':');
+  const found = new Set([info, decode(info), Buffer.from(decode(info)).toString('base64'), user, decode(user), rest.join(':'), decode(rest.join(':'))]);
+  return [...found].filter((text) => text.length >= 4).sort((a, b) => b.length - a.length);
+}
+
+// A value of the answer, with the secrets and any user information in an http or https address taken out of every string.
+export function hide(value, secrets) {
+  if (typeof value === 'string') return secrets.reduce((text, secret) => text.split(secret).join('***'), scrub(value));
+  if (Array.isArray(value)) return value.map((item) => hide(item, secrets));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hide(item, secrets)]));
+  return value;
 }
 
 // ---- the record written at init -----------------------------------------------------------------------------
@@ -495,6 +588,8 @@ const USAGE = 'the only accepted form is: node <fvs scripts dir>/fvs-auto-push.m
 
 // Runs the whole command and returns {status, json}; main() only prints it.
 export function run(argv, { cwd = process.cwd(), env = process.env, now = () => new Date() } = {}) {
+  // What a push that used an address with a token must keep out of every string it answers, logs or writes to stderr.
+  let secrets = [];
   try {
     if (argv.length !== 2 || argv[0] !== '--branch' || !argv[1] || argv[1].startsWith('-')) refuse('usage', `${USAGE}; no other argument is accepted`);
     const branch = argv[1];
@@ -519,6 +614,16 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     if (wrongBranch) refuse('branch-refused', wrongBranch);
     const rewritten = rewriteProblem(found, record.url, gitEnv);
     if (rewritten) refuse('destination-rewritten', `${rewritten}; the push was not made`);
+    // The address the push is given: the recorded one, or the address with user information that a remote of this
+    // repository holds for the same destination. That one is checked for rewriting as well, and from here on every
+    // string that leaves the command is cleaned of what it holds.
+    const held = configuredAddress(found, record, gitEnv);
+    const address = held ?? record.url;
+    if (held) {
+      secrets = secretsOf(held);
+      const heldRewritten = rewriteProblem(found, held, gitEnv);
+      if (heldRewritten) refuse('destination-rewritten', `${heldRewritten}; the push was not made`);
+    }
     const read = git(['rev-parse', '--verify', `refs/heads/${branch}^{commit}`], { where: found, env: gitEnv });
     const tip = read.stdout.trim();
     if (read.status !== 0 || !/^[0-9a-f]{40,64}$/.test(tip)) refuse('branch-refused', `the tip of refs/heads/${branch} could not be read as a commit (${read.stderr || read.error?.message || `exit ${read.status}`}), so nothing was pushed`);
@@ -528,8 +633,10 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     // --no-verify skips the pre-push hook, including one that is set in git configuration with hook.<name>.event, which
     // core.hooksPath does not turn off. -c core.hooksPath=/dev/null makes git find no hook in any hooks folder, whether it
     // is the default one or named by core.hooksPath in any configuration file. Each is kept for what the other does not do.
-    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', '--no-verify', record.url, refspec],
-      { where: found, env: gitEnv, stdio: ['inherit', 'pipe', 'inherit'] });
+    const pushed = git(['-c', 'push.followTags=false', '-c', 'push.pushOption=', '-c', 'core.hooksPath=/dev/null', '-c', 'core.abbrev=no', 'push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no', '--no-verify', address, refspec],
+      { where: found, env: gitEnv, stdio: ['inherit', 'pipe', 'pipe'] });
+    // What git says on its error output is passed on, cleaned: a rejected token can come back in it.
+    if (pushed.stderr) process.stderr.write(`${hide(pushed.stderr, secrets)}\n`);
     const seen = parsePorcelain(pushed.stdout, branch);
     const status = STATUS[seen.flag] ?? null;
     const accepted = pushed.status === 0 && (status === 'created' || status === 'fast-forward' || status === 'up-to-date');
@@ -537,25 +644,26 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     // lost connection, a signal, no line for the ref) leaves the outcome open: the destination may have taken the update.
     const result = accepted ? status : seen.flag === '!' ? 'failed' : 'unknown';
     const entry = {
-      at: now().toISOString(), branch, destination: record.url, repositoryRoot: found.top, commonDir: found.commonDir, gitVariables: report,
+      at: now().toISOString(), branch, destination: record.url, usedConfiguredAddress: held !== null, repositoryRoot: found.top, commonDir: found.commonDir, gitVariables: report,
       result, porcelainFlag: seen.flag, porcelain: seen.line, to: seen.to,
       // Only ids that the push itself reported. A new branch and an up-to-date branch carry none in git's summary, and the
       // tip read before the push is not an id of what was sent: the branch can move between the read and the push.
       oldRemoteId: seen.old, newRemoteId: accepted ? seen.new : null, localTipBeforePush: tip,
       exitStatus: pushed.status, signal: pushed.signal ?? null, error: pushed.error?.message ?? null,
     };
-    const log = appendLog(record, entry);
-    const detail = { ...entry, ...log };
+    const log = appendLog(record, hide(entry, secrets));
+    const detail = { ...hide(entry, secrets), ...log };
     if (result === 'failed') refuse('push-failed', `git did not update ${branch} on the destination: ${seen.line.replace(/\t/g, ' ')}`, detail);
     if (result === 'unknown') {
       const how = pushed.error?.code === 'ETIMEDOUT' ? 'did not finish within 30 seconds' : pushed.signal ? `was stopped by ${pushed.signal}` : `ended with exit ${pushed.status}${seen.line ? ` and the line "${seen.line.replace(/\t/g, ' ')}"` : ' and no result line for the branch'}`;
       refuse('push-outcome-unknown', `git ${how}, so this command does not know whether ${branch} was updated on the destination. It may have been. Read the destination before you retry (for example with git ls-remote on the recorded address), and report this code and message`, detail);
     }
-    if (seen.to !== null && seen.to !== record.url && seen.to !== anonymizeUrl(record.url)) refuse('unexpected-destination', `the push ran, but git reported ${seen.to} instead of the recorded ${record.url}; tell the owner`, detail);
+    // git prints the address it pushed to as it reads it after any rewrite rule, and without user information.
+    if (seen.to !== null && seen.to !== anonymizeUrl(record.url) && !sameDestination(seen.to, record.url)) refuse('unexpected-destination', `the push ran, but git reported ${seen.to} instead of the recorded ${record.url}; tell the owner`, detail);
     return { status: 0, json: { code: 'pushed', ...detail } };
   } catch (error) {
     if (!(error instanceof Refuse)) throw error;
-    return { status: error.code === 'usage' ? 2 : 1, json: { code: error.code, message: error.message, ...error.details } };
+    return { status: error.code === 'usage' ? 2 : 1, json: hide({ code: error.code, message: error.message, ...error.details }, secrets) };
   }
 }
 

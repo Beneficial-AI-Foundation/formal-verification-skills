@@ -45,7 +45,8 @@ cannot read stops the check. This is a check at setup time and remote settings c
 the push command repeats it at every push. `fvs` is the branch namespace the run pushes under; you choose
 it, and it can never be `main`, `master`, `release` or a wildcard. Init records the push address as git would use it
 after its own rewriting, without any user information, and it stops when a `url.<base>.insteadOf` or `pushInsteadOf`
-rule would send that address anywhere but to itself, because the push command refuses such a destination.
+rule would send that address to another host, repository or port, or over a scheme other than https or ssh, because
+the push command refuses such a destination.
 
 Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
 them yourself, or add your own rule if you want them to run unasked.
@@ -147,9 +148,11 @@ What it checks:
 - It compares the shared git directory of the repository it runs in with the one recorded for the destination, and
   refuses when they differ or when a work tree points at another repository.
 - It refuses a branch that is not a plain local branch under a recorded namespace. It pushes to the destination
-  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to that
-  address. A rule that only adds user information to an http or https address, as a sandbox does to inject a token,
-  is allowed: the record holds the address without user information, and no message, record or receipt shows it.
+  address recorded at init, and refuses that address when a URL rewrite rule would send it anywhere but to the same
+  host and OWNER/REPO, or over any scheme but https or ssh (ssh:// or git@host:OWNER/REPO), or to another port. A
+  rule that only adds user information to an http or https address, as a sandbox does to inject a token, is allowed,
+  and so is a rule that changes the address between https, ssh:// and git@host:OWNER/REPO on the same host and
+  OWNER/REPO: the record holds the address without user information, and no message, record or receipt shows it.
 
 What it does for this push, to harden it:
 
@@ -177,6 +180,12 @@ What it trusts, and so does not protect against:
 - Credential helpers.
 - The git configuration variables whose names you trusted at init, the way you trust your own git configuration
   files: whatever value they have when the command runs is used for the checks and for the push.
+- The address that a remote of the repository holds with user information (a token) for the recorded host and
+  OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the
+  push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration
+  keeps working. The record, the messages and the receipt never show the token, and the command removes it from what
+  git prints. As with any git push, the address and its token are visible in the process arguments of the local
+  machine while git runs.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.
@@ -199,9 +208,12 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   work tree that were found, so none of them finds a repository again from a directory.
 - `<name>` is a plain branch name under a recorded namespace (`fvs/...`), `refs/heads/<name>` exists as a local
   branch, it is not a symbolic ref, and no tag has the same name.
-- no `url.<base>.insteadOf` or `pushInsteadOf` rule sends the recorded address anywhere but to itself (a rule that
-  only adds user information to an http or https address is allowed), no `[remote "<address>"]` section is named
-  after it, and git reads the address as recorded, user information aside.
+- every `url.<base>.insteadOf` or `pushInsteadOf` rule that applies to the recorded address sends it to the same
+  host and OWNER/REPO, over https, `ssh://` or `git@host:OWNER/REPO` on the default ports, as a rule that only adds
+  user information to an http or https address does too. A rule that sends it over any other scheme (`file://`,
+  `git://`, `ext::`, `fd::`, a local path), to plain http, or to another host, repository or port is refused with
+  `destination-rewritten`. No `[remote "<address>"]` section is named after it, and git reads the address as
+  recorded, user information aside.
 - git finds the repository with the git variables that you trusted at init and no others. The command looks for the
   record from the work directory first, then asks git for the shared git directory and compares the two. A variable
   that is set and not trusted never reaches git. In a sandbox that needs one of them (git refuses a repository that
@@ -214,7 +226,8 @@ A worker that gets a refusal stops and reports its `code` and `message`. It does
 
 ### What it sends
 
-It pushes to the address recorded at init, never to a remote name. In the tests, none of these settings changed
+It pushes to the address recorded at init, or to the address with user information that a remote holds for it (see
+"Where the destination is recorded"), and never to a remote name. In the tests, none of these settings changed
 where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushurl`, `remote.<name>.mirror`,
 `remote.pushDefault`, `branch.<name>.pushRemote`, `push.default`, `push.followTags`, `push.recurseSubmodules` and
 `submodule.recurse`. It uses the full refspec `refs/heads/<name>:refs/heads/<name>` without a `+`,
@@ -242,7 +255,9 @@ that as a later observation: another push may have come in since. The command le
 The receipt, in the output and in that file, also has `gitVariables`. For each trusted name it says `same` (the
 value is the one that was there at init), `changed` (another value, which the command used) or `not-set`, and
 `added` for a numbered pair that the trusted count addresses now and the record does not name. It lists the names
-that were set and not trusted, which the push dropped. It holds no value and no hash.
+that were set and not trusted, which the push dropped. It holds no value and no hash. `usedConfiguredAddress` says
+whether the push went to an address with user information that a remote holds; the receipt names the recorded
+address, without it.
 
 When git ends without a result for the branch (a lost connection, a timeout, a signal), the destination may have
 taken the update. The command then reports `push-outcome-unknown` and does not say that nothing changed. Read the
@@ -305,12 +320,26 @@ address of the remote (`https://user:token@host/...`). Init does not refuse that
 user information, the destination is the host and OWNER/REPO, and no message, record or receipt shows the user
 information: a message shows an http address as `https://***@host/...`. A rule that only adds plain user information
 to the recorded address (no `/`, `?`, `#`, `\` or `@` in it, which git and curl read as the end of the host) is
-allowed at every push, and the push uses it. Any other rule that applies to the address is refused, one that changes
-the scheme included, and so is a record that holds user information. The push goes to the address without the user
-information, so a token that only the remote's address held reaches it from a credential helper, or from a rule like
-this one, in git configuration or in a trusted variable. A rule that rewrites an ssh address to an https one with a
-token (`url.https://x:token@github.com/.insteadOf` for `git@github.com:`) is recorded as the plain https address,
-and it no longer applies to that address: add a rule for `https://github.com/` too, or use a credential helper.
+allowed at every push, and the push uses it. So is a rule that changes the recorded address between https, `ssh://`
+and `git@host:OWNER/REPO` on the same host and OWNER/REPO and the default ports: a common `insteadOf` setup maps
+`https://github.com/` to `git@github.com:`. Any other rule that applies to the address is refused: one that sends it
+over another scheme (`file://`, `git://`, `ext::`, `fd::`, a local path, an unknown transport) or plain http, or to
+another host, repository or port. A record that holds user information is not used either.
+
+When exactly one remote of the repository holds an http or https address with user information for the recorded host
+and OWNER/REPO (an `origin` cloned as `https://x-access-token:token@github.com/OWNER/REPO`, as a sandbox often
+clones), the push goes to that address, after the same host, repository and rewrite checks, so that the token in
+your own git configuration keeps working. A remote with push URLs counts through them only, as in git. Two different
+addresses with user information for the destination are refused with `remote-ambiguous` before anything connects:
+keep one. The record and the receipt still hold the address without user information, and the command takes the
+token, its user and password parts and the base64 of the pair out of everything that it prints, logs or passes on
+from git's error output, also after a failed push, because git can print a token that is the user name of an
+address. As with any git push, the address with its token is visible in the process arguments of the local machine
+while git runs, and another user of the machine can read it there. A token that a rule or a credential helper
+supplies does not appear in the arguments. A rule that rewrites an ssh address to an https one with a token
+(`url.https://x:token@github.com/.insteadOf` for `git@github.com:`) is recorded as the plain https address, and it
+no longer applies to that address: add a rule for `https://github.com/` too, hold the token in the address of the
+remote, or use a credential helper.
 
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview lists each one by
@@ -491,6 +520,7 @@ covers the session that ran init. If your workers run in another mode, check tha
   binding (a `.claude` or `.codex` link retargeted between the preview and the confirmation, a changed file,
   another project root), the `recheck` entry point, and the push command: every refusal listed above, and real
   pushes into a throwaway local bare repository that stands in for the fork, reached through a stand-in for `ssh`.
+  The token cases push over http to a git server on the local machine that turns a push away without the token.
   Nothing in them contacts GitHub.
 - The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0: the file parses, each probe
   command is allowed, and `git push`, merge and other commands are not matched. The tests repeat this when a Codex
