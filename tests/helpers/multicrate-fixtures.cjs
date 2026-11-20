@@ -135,8 +135,9 @@ function unit(root, crate, functions, extra = {}) {
 }
 
 // A project whose recorded extraction succeeded over the crates `units(root)` builds;
-// the first is the main crate. `run` adds fields to the top-level run.
-function extracted(units, { run = {}, below = false } = {}) {
+// the first is the main crate. `run` adds fields to the top-level run. `dropped` lists the
+// crates a patch removed from the copy, each `{ crate, reason }`.
+function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
   const root = project(below);
   init(root);
   const state = readState(root);
@@ -148,7 +149,7 @@ function extracted(units, { run = {}, below = false } = {}) {
     units: order.map((crate) => {
       const row = rows.find((entry) => entry.crate === crate);
       return { crate, package: row?.package, dir: row?.dir, stitch: [...new Set([].concat(row?.stitch ?? []).map((entry) => entry.provider))].sort() };
-    }), nonTargets: [], dropped: [] };
+    }), nonTargets: [], dropped };
   const rosterSha256 = sha256(JSON.stringify(roster));
   for (const row of rows) row.rosterSha256 = rosterSha256;
   state.extraction = {

@@ -37,8 +37,9 @@ const specFile = (file, statements, extra = {}) => ({ path: file, sha256: '0'.re
 // and a draft proof PR is recorded at the head. `units` builds the extraction's crates.
 // With `prune` the owner removes that spec file before merging, with `below` the Lean project is a
 // folder of the repository.
-function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false, prune = null, below = false } = {}) {
-  const root = extracted(units, { below });
+function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false, prune = null, below = false, dropped = [] } = {}) {
+  const root = extracted(units, { below, dropped });
+  const holds = (crate) => fixtures.readState(root).extraction.run.units.some((row) => row.crate === crate);
   if (targets) fixtures.recordAgreement(root, fixtures.agreementFor(root, { targets }));
   fs.mkdirSync(path.join(root, 'formal/specs/Specs'), { recursive: true });
   fs.writeFileSync(path.join(root, HMAC_SPEC), 'recall hmac_spec\n');
@@ -50,7 +51,7 @@ function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false, prun
     '--round', '1', '--verdict', 'pass', '--review', 'review.md').status, 0);
   if (!noSpecs) {
     recordSpec(HMAC_SPEC, HMAC_ITEM);
-    if (!targets) recordSpec(SHA2_SPEC, SHA2_ITEM);
+    if (holds('libcrux_sha2') && (!targets || targets.crates.includes('libcrux_sha2'))) recordSpec(SHA2_SPEC, SHA2_ITEM);
   }
   if (prune) {
     fs.rmSync(path.join(root, prune));
@@ -351,6 +352,49 @@ describe('the proof phase over several crates', () => {
       const result = view(root);
       assert.equal(result.phase, 'done', result.nextAction);
       assert.deepEqual(result.pendingDecisions.filter((text) => /non-target/.test(text)), []);
+    });
+  });
+
+  describe('a crate a patch removed from the extraction copy', () => {
+    // The extraction's own reason for removing libcrux_traits is no substitute for the owner's decision.
+    const removed = [{ crate: 'libcrux_traits', reason: 'its path dependency became a registry release' }];
+    const one = (directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])];
+    const said = /but not every verified crate is accepted: crate libcrux_traits: the extraction left this crate out of the copy \(its path dependency became a registry release\), and the owner has not recorded that decision in the agreement\. Fix what is named/;
+    const pending = 'crate libcrux_traits left out of the extraction copy: the owner has not recorded a decision in the agreement';
+
+    it('keeps a run with one target from being done until the owner records the decision', () => {
+      const { root, head } = proofPhase(one, { dropped: removed });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'proofs', result.nextAction);
+      assert.match(result.nextAction, said);
+      assert.ok(result.pendingDecisions.includes(pending));
+      assert.deepEqual(result.crates.nonTargets, ['libcrux_traits']);
+    });
+
+    it('is done with one target once the agreement records the owner\'s decision about it', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Left out of the copy on purpose; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(one, { dropped: removed, targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.pendingDecisions.filter((text) => /libcrux_traits/.test(text)), []);
+    });
+
+    it('keeps a run with several targets from being done until the owner records the decision', () => {
+      const { root, head } = proofPhase(hmacAndSha2, { dropped: removed });
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs', result.nextAction);
+      assert.match(result.nextAction, said);
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]], 'the verified crates are accepted on their own statements');
+    });
+
+    it('is done with several targets once the agreement records the owner\'s decision about it', () => {
+      const targets = { crates: ['libcrux_hmac', 'libcrux_sha2'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Left out of the copy on purpose; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(hmacAndSha2, { dropped: removed, targets });
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
     });
   });
 

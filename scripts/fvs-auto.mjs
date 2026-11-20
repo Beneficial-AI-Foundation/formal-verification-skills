@@ -1183,17 +1183,21 @@ function crateView(run, always = false) {
 
 // What the extraction and the owner's agreement together say about the crates of this
 // project, or null when there is nothing to say: a single crate, no non-target crate
-// the extraction declared and no crate decision in the agreement. A target is an
-// extracted crate the owner did not drop; a crate the agreement names a target but the
-// extraction lacks is missing; a non-target crate, declared by the extraction or dropped
-// by the owner, only has assumptions.
+// the extraction declared, no crate a patch removed from the copy and no crate decision in
+// the agreement. A target is an extracted crate the owner did not drop; a crate the agreement
+// names a target but the extraction lacks is missing; a non-target crate, declared by the
+// extraction or dropped by the owner, only has assumptions. A crate a patch removed from the
+// copy (`omitted`: its sources are left out, or its path dependency became a registry release)
+// is such a crate too, and the extraction's own reason for removing it is no substitute for the
+// owner's decision: it waits for that decision like a declared non-target.
 function crateContextOf(state) {
   const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
   if (!extraction) return null;
   const { run } = extraction;
   const units = unitsOf(run);
   const agreed = state.agreements?.at(-1)?.payload?.targets ?? null;
-  const declared = [...new Set([run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText))].sort();
+  const omitted = new Map((Array.isArray(run?.roster?.dropped) ? run.roster.dropped : []).filter((entry) => isText(entry?.crate)).map((entry) => [entry.crate, isText(entry.reason) ? entry.reason : null]));
+  const declared = [...new Set([...[run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText), ...omitted.keys()])].sort();
   if (units.length < 2 && declared.length === 0 && agreed === null) return null;
   const view = crateView(run, true);
   if (view === null) return null;
@@ -1205,7 +1209,9 @@ function crateContextOf(state) {
     view, units, extracted, targets,
     missing: (agreed?.crates ?? []).filter((crate) => !extracted.includes(crate)),
     nonTargets: new Set([...declared, ...dropped]),
-    // Declared non-target crates whose owner decision is not in the agreement yet.
+    omitted,
+    // Declared non-target crates and crates removed from the copy whose owner decision is not in the
+    // agreement yet.
     undecided: declared.filter((crate) => !dropped.has(crate)),
     // Extracted crates that an agreement with crate decisions names as neither a target nor a non-target.
     unlisted: agreed === null ? [] : targets.filter((crate) => !agreed.crates.includes(crate)),
@@ -1305,7 +1311,9 @@ function crateWarnings(context) {
   ];
 }
 
-const crateDecisions = (context) => context.undecided.map((crate) => `non-target crate ${crate}: the owner has not recorded a decision in the agreement`);
+const crateDecisions = (context) => context.undecided.map((crate) => (context.omitted.has(crate)
+  ? `crate ${crate} left out of the extraction copy: the owner has not recorded a decision in the agreement`
+  : `non-target crate ${crate}: the owner has not recorded a decision in the agreement`));
 
 // The target crates the build check accepted at the head of the proof PR. The check builds the
 // whole project once, so a crate is accepted when every statement of its recorded spec files
@@ -1353,7 +1361,11 @@ function crateAcceptance(root, specs, context, receipt, blocked = null) {
   for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
   // A crate the extraction only assumes is a black box in every crate that calls it, and nobody but the
   // owner decides that a crate is not verified: until the agreement records it, the run is not done.
-  for (const crate of context.undecided) result.push({ crate, accepted: false, reason: 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
+  for (const crate of context.undecided) {
+    result.push({ crate, accepted: false, reason: context.omitted.has(crate)
+      ? `the extraction left this crate out of the copy${context.omitted.get(crate) === null ? '' : ` (${context.omitted.get(crate)})`}, and the owner has not recorded that decision in the agreement`
+      : 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
+  }
   return result;
 }
 
