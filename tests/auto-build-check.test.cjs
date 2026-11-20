@@ -1202,15 +1202,19 @@ describe('the allowed axioms', () => {
     assert.equal(run(fixture(), LIST(), resting([EXTERNAL])).result.json.accepted, false);
   });
 
-  test('an axiom that sorry, native_decide or bv_decide would add is refused with a list or without, listed or not', () => {
+  test('a native_decide or bv_decide axiom that is new since the merged spec is refused with a list or without, listed or not; one the merged spec had is kept', () => {
     const native = 'Dep.foo._native.native_decide.ax_1';
     const asNew = (names) => { const { head } = resting(names); return { base: resting([]).base, head }; };
     const without = check(fixture(), { dump: asNew([native]) });
     assert.equal(without.json.accepted, false);
-    assert.equal(problemOf(without, 'axiom-not-allowed').statement, native);
+    assert.deepEqual([...new Set(without.json.integrity.problems.map((p) => p.kind))], ['native-added']);
+    assert.equal(problemOf(without, 'native-added').statement, 'Dep.foo');
     const listed = run(fixture(), LIST(native), asNew([native])).result;
-    assert.equal(listed.json.accepted, false, 'a list does not make a new axiom outside Trusted acceptable');
-    assert.match(problemOf(listed, 'axiom-not-allowed').detail, /declared outside Trusted/);
+    assert.equal(listed.json.accepted, false, 'a list does not make a new native axiom acceptable');
+    assert.match(problemOf(listed, 'native-added').detail, /native_decide or bv_decide/);
+    const kept = run(fixture(), LIST(native), resting([native])).result;
+    assert.equal(kept.status, 0, `the merged spec had it, so the list alone decides: ${kept.stderr}`);
+    assert.equal(run(fixture(), LIST(), resting([native])).result.json.accepted, false, 'an unlisted one is still not on the list');
   });
 
   test('an axiom whose type is a proposition must be a hand-written Trusted axiom, even when it is listed', () => {
@@ -1590,12 +1594,34 @@ describe('the Lean program: the axioms a statement may rest on', () => {
     assert.deepEqual(kinds(changed), ['axiom-changed']);
   });
 
-  test('sorry, native_decide and bv_decide add axioms that are not the project’s, so a statement resting on one is refused', async () => {
-    for (const axiom of ['sorryAx', 'Lean.ofReduceBool', 'Dep.foo._native.bv_decide.ax_1']) {
-      const result = await compare({ ...DUMPS({ recalls: { 'Dep.foo': { axioms: ['propext', axiom] } } }) });
-      assert.ok(kinds(result).includes('axiom-not-allowed'), axiom);
-      assert.match(result.problems.find((p) => p.kind === 'axiom-not-allowed').detail, new RegExp(`rests on the axiom ${axiom.replaceAll('.', '\\.')}`));
+  test('sorry adds an axiom that is not the project’s, so a statement resting on it is refused', async () => {
+    const result = await compare({ ...DUMPS({ recalls: { 'Dep.foo': { axioms: ['propext', 'sorryAx'] } } }) });
+    assert.ok(kinds(result).includes('axiom-not-allowed'));
+    assert.match(result.problems.find((p) => p.kind === 'axiom-not-allowed').detail, /rests on the axiom sorryAx/);
+  });
+
+  test('a statement may keep a native_decide or bv_decide axiom it rested on at the merged spec, and may not gain one', async () => {
+    const [oldName, ours, theirs] = ['Lean.ofReduceBool', 'Dep.foo._native.native_decide.ax_1', 'Dep.foo._native.bv_decide.ax_1'];
+    const resting = (axioms) => ({ recalls: { 'Dep.foo': { axioms: ['propext', ...axioms] } } });
+    const same = (axioms) => DUMPS({ ...resting(axioms), constants: [FOO, DIV()], docs: BASE_DOCS }, resting(axioms));
+    for (const axiom of [oldName, ours]) {
+      assert.deepEqual(kinds(await compare(same([axiom]))), [], `${axiom}: the merged spec rested on it already`);
+      const added = await compare({ ...DUMPS({ ...resting([axiom]), constants: [FOO, DIV()], docs: BASE_DOCS }) });
+      assert.deepEqual(kinds(added), ['native-added'], `${axiom}: the merged spec did not`);
+      assert.match(added.problems[0].detail, new RegExp(`rests on ${axiom.replaceAll('.', '\\.')}, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec`));
     }
+    const swapped = await compare({ ...DUMPS({ ...resting([theirs]), constants: [FOO, DIV()], docs: BASE_DOCS }, resting([ours])) });
+    assert.deepEqual(kinds(swapped), ['native-added'], 'another native axiom than the one it had');
+    const made = constant(ours, { k: 'axiom', m: 'formal.proofs.A', t: 'reduceBool b = true', v: undefined, tc: null });
+    const base = { ...resting([ours]), constants: [FOO, DIV(), made], docs: BASE_DOCS };
+    const unchanged = await compare({ base: leanDump(base), head: leanDump(base) });
+    assert.deepEqual(kinds(unchanged), []);
+    const changed = await compare({ base: leanDump(base), head: leanDump({ ...base, constants: [FOO, DIV(), { ...made, t: 'reduceBool c = true' }] }) });
+    assert.deepEqual(kinds(changed), ['axiom-changed'], 'the generated name with another proposition is not the merged spec’s axiom');
+    const fresh = constant('Dep.helper._native.native_decide.ax_1', { k: 'axiom', m: 'formal.proofs.A', t: 'reduceBool d = true', v: undefined, tc: null });
+    const plain = { ...resting([]), constants: [FOO, DIV()], docs: BASE_DOCS };
+    const unreached = await compare({ base: leanDump(plain), head: leanDump({ ...plain, constants: [FOO, DIV(), fresh] }) });
+    assert.deepEqual(kinds(unreached), ['native-added'], 'a new native axiom that no statement rests on is refused too');
   });
 
   test('a new axiom outside Trusted is refused even when its docstring cites an accepted record', async () => {
@@ -1838,6 +1864,41 @@ describe('real Lean: a statement that still reads the same but does not mean the
     const strengthened = realCheck(realProject({ ...REAL_HEAD, 'Fx/Trusted/Gaps.lean': `import Fx.Specs.Defs.Gaps\n\n${trusted('False')}` }));
     assert.equal(strengthened.status, 1, strengthened.stderr);
     assert.ok(strengthened.json.integrity.problems.some((p) => p.kind === 'trusted-axiom-unbound' && /asserts False/.test(p.detail)), strengthened.stderr);
+  });
+
+  // native_decide adds a generated axiom named after the theorem. The merged spec here proves foo_spec with it,
+  // so the axiom exists on both sides; what counts is whether a statement rests on one it did not rest on there.
+  describe('a native_decide axiom that the merged spec already had', () => {
+    const NATIVE = 'Fx.foo_spec._native.native_decide.ax_1_1';
+    const GUARD_ON = (name, axioms) => `/-- '${name}' depends on axioms: [${axioms.join(', ')}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms ${name}\n`;
+    const spec = (foo, bar) => `import Fx.Proofs.P\n\nrecall Fx.foo_spec : Fx.limit = 10\n\n${foo}\nrecall Fx.bar_spec : Fx.limit = 10\n\n${bar}`;
+    const proofs = (foo, bar) => `import Fx.Proofs.Helper\n\ntheorem Fx.foo_spec : Fx.limit = 10 := ${foo}\n\ntheorem Fx.bar_spec : Fx.limit = 10 := ${bar}\n`;
+    const baseFiles = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'by\n  sorry'), 'Fx/Specs/A.lean': spec('#print axioms Fx.foo_spec\n', '#print axioms Fx.bar_spec\n') };
+    const kinds = (result) => result.json.integrity.problems.map((p) => p.kind);
+
+    test('is kept, and flagged in the receipt, when the statement already rested on it', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.flags, ['Fx.foo_spec uses native_decide']);
+    });
+
+    test('is not enough for a statement that did not rest on it: proving another one with the first is refused', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by native_decide', 'Fx.foo_spec'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_ON('Fx.bar_spec', [NATIVE])) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(kinds(result), ['native-added']);
+      assert.equal(result.json.integrity.problems[0].statement, 'Fx.bar_spec');
+      assert.match(result.json.integrity.problems[0].detail, /rests on Fx\.foo_spec\._native\.native_decide\.ax_1_1, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec/);
+    });
+
+    test('the same generated name asserting something else is not the merged spec’s axiom, and is refused', () => {
+      const files = { 'Fx/Proofs/P.lean': proofs('by\n  have _h : (2 : Nat) + 2 = 4 := by native_decide\n  rfl', 'rfl'), 'Fx/Specs/A.lean': spec(GUARD_ON('Fx.foo_spec', [NATIVE]), GUARD_NONE('Fx.bar_spec')) };
+      const result = realCheck(realProject(files, { baseFiles }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(kinds(result), ['axiom-changed']);
+      assert.equal(result.json.integrity.problems[0].statement, NATIVE);
+    });
   });
 
   // The names a statement rests on come from Lean's environment, in full, and whether an axiom's type is a

@@ -38,8 +38,10 @@
 // statement rests on come from Lean, not from the guard text: Lean's three standard axioms, a project
 // axiom of the merged spec that has not changed, and a new axiom only in a Trusted module that asserts
 // exactly the one frozen proposition of the merged spec whose docstring cites the axiom's accepted
-// externals record (a record is cited by one axiom only); sorry, native_decide and bv_decide axioms
-// are refused. If the program cannot run, or the merged spec does not build, the commit is not accepted.
+// externals record (a record is cited by one axiom only); a sorry axiom is refused. A native_decide or
+// bv_decide axiom is refused when it is new since the merged spec or when a statement rests on one it did
+// not rest on there; one a statement already rested on at the merged spec stays, and the receipt flags it.
+// If the program cannot run, or the merged spec does not build, the commit is not accepted.
 // The receipt keeps the comparison under integrity.semantic.
 //
 // With --allow-axioms FILE (a list the engine writes from its own records, JSON with schema
@@ -1186,18 +1188,26 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
     if (!baseAxioms.has(axiom.name)) continue;
     if (closureDigest(closureOf(base.constants, axiom.name)) !== closureDigest(closureOf(head.constants, axiom.name))) add('axiom-changed', axiom.name, `the axiom ${axiom.name} of the merged spec asserts something else than it did`);
   }
+  // native_decide and bv_decide: a statement may keep resting on a native-decision axiom that it already
+  // rested on at the merged spec (the receipt flags it); resting on one it did not rest on there is refused.
   for (const [id, now] of head.recalls) {
     for (const rest of now.rests) {
+      const had = new Set((base.recalls.get(id)?.rests.find((entry) => entry.n === rest.n)?.axioms ?? []).filter((name) => NATIVE_AXIOM.test(name)));
       for (const name of rest.axioms) {
         if (standard.has(name)) continue;
+        if (NATIVE_AXIOM.test(name)) {
+          if (!had.has(name)) add('native-added', id, `the statement ${id} (${rest.n}) rests on ${name}, an axiom that native_decide or bv_decide adds, and it did not rest on it at the merged spec`);
+          continue;
+        }
         const constant = head.constants.get(name);
-        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry, native_decide and bv_decide add such axioms)`);
+        if (!constant || constant.kind !== 'axiom') add('axiom-not-allowed', id, `the statement ${id} (${rest.n}) rests on the axiom ${name}, which is not one of Lean's three standard axioms or an axiom of the project (sorry adds such an axiom)`);
       }
     }
   }
   const bindings = [];
   const cited = (dump, kind) => dump.docs.filter((doc) => doc[kind]);
   for (const axiom of newAxioms) {
+    if (NATIVE_AXIOM.test(axiom.name)) { add('native-added', axiom.name, `${axiom.name} is an axiom that native_decide or bv_decide added since the merged spec (in ${axiom.module}); the merged spec did not have it`); continue; }
     if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
     const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
     const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
