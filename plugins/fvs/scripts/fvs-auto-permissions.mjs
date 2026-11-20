@@ -28,7 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, initDestination, parseRemoteUrl, runGit } from './fvs-auto-push.mjs';
+import { CONTRACT, RECORD_NAME, WORD, checkPrefixShape, contractText, differingVariables, initDestination, parseRemoteUrl, runGit } from './fvs-auto-push.mjs';
 
 export { parseRemoteUrl };
 export const RECORD_FILE = '.formalising/auto-fv/permissions.json';
@@ -265,22 +265,25 @@ function context(flags) {
 }
 
 // The destination record the push command reads, in the repository's shared git directory: missing, the same as what init
-// would record now, or something else (another destination, an older record, a file that is not JSON).
+// would record now, or something else (another destination, an older record, a file that is not JSON). When it differs,
+// `changedVariables` names the confirmed git variables that are not the same as in this session, never their values.
 function destinationState({ record, commonDir }) {
   const file = path.join(commonDir, RECORD_NAME);
   let existing;
   try { existing = readJson(file); } catch (error) {
     return error.code === 'ENOENT' ? { file, status: 'missing' } : { file, status: 'unreadable', problem: error.message };
   }
-  return { file, status: isDeepStrictEqual(existing, record) ? 'matches' : 'differs', existing };
+  if (isDeepStrictEqual(existing, record)) return { file, status: 'matches', existing };
+  return { file, status: 'differs', existing, changedVariables: differingVariables(existing, record) };
 }
+const changedNote = (state) => (state.changedVariables?.length ? ` The git variables ${state.changedVariables.join(', ')} differ from the recorded ones.` : '');
 
 // The push rule names a command that pushes to the recorded destination, so it is written only once that record
 // exists and is still what init would record now.
 function requireDestination(destination) {
   const state = destinationState(destination);
   if (state.status !== 'matches') {
-    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : 'does not hold what init would record now'}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
+    refuse('destination-not-recorded', `the push command pushes to the recorded destination, and ${state.file} ${state.status === 'missing' ? 'is missing' : `does not hold what init would record now${state.changedVariables?.length ? ` (the git variables ${state.changedVariables.join(', ')} differ)` : ''}`}. Run write-destination first: it shows what it records and waits for the user's yes. Nothing was written.`, { destination: state });
   }
   return destination.record;
 }
@@ -323,7 +326,7 @@ function plan(flags) {
     repo: catalog.repo, remote: catalog.remote, branchPrefixes: catalog.prefixes,
     pushCommand: catalog.pushCommand.example,
     pushContract: CONTRACT,
-    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record },
+    pushDestination: { file: state.file, status: state.status, wouldRecord: destination.record, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) },
     steps: catalog.steps.map((step) => probeEntry(step, lakeBlocker)),
     message: record
       ? 'A record exists: do not run the check again; show the summary. To check again on the owner\'s request (after rules were written, or in a new Codex session), run the recheck command.'
@@ -520,14 +523,20 @@ function confirmationNeeded(flags, digest, preview) {
 function writeDestination(flags) {
   const { root, destination } = context(flags);
   const state = destinationState(destination);
+  const shown = Object.keys(destination.variables);
   const preview = {
     projectRoot: root, file: state.file, record: destination.record,
     note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
+    // The only place that prints the values: the user confirms them here. The record keeps a hash of each, not the value.
+    gitConfigVariables: destination.variables,
+    gitConfigNote: shown.length
+      ? `These git configuration variables are set in this session: ${shown.join(', ')}. If you confirm, the push command keeps exactly these, with these values, and refuses to push when one is missing or has another value; it removes every other git variable of its list. You trust them the way you trust your own git configuration files. The record holds a hash of each value, not the value.`
+      : 'No git configuration variable is set in this session, so the push command runs without all of them (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its pairs, GIT_CONFIG_PARAMETERS).',
     contract: CONTRACT,
   };
   if (state.status === 'matches') return { code: 'unchanged', message: `${state.file} already records this destination`, ...preview };
   if (state.status !== 'missing') {
-    refuse('destination-conflict', `${state.file} already exists and is not what init would record now. FVS never replaces it, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null });
+    refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS never replaces it, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
   confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), preview);
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);

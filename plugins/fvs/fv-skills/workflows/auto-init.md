@@ -296,13 +296,18 @@ node "$PERM" write-destination --project-root . --repo "$DRAFT_REPO" --remote or
 It writes nothing and refuses with `confirmation-required`, printing the `record` (the push address as git will use
 it after its own rewriting, the host, the repository, the branch namespaces, the project root and the git
 directory), the `file` (in the repository's shared git directory, so no commit contains it), a `note`, the
-`contract` (what the push command checks, hardens and trusts) and a digest. Show the owner exactly that, with the
-contract as printed, and ask. Only on the yes, rerun the same command with `--confirm <digest>`. On a no, nothing is
+`gitConfigVariables` (every git configuration variable that is set in this session, with its value) with its
+`gitConfigNote`, the `contract` (what the push command checks, hardens and trusts) and a digest. Show the owner
+exactly that, with the contract as printed, and ask. The owner confirms those variables too: the push command keeps
+exactly them, with those values, and refuses to push when one is missing or has changed. Say that a value can be a
+credential and is printed here once; the record keeps only a hash of it. If one holds a token, the owner can unset it
+and run this step again. Run this step in the environment the workers will have. Only on the yes, rerun the same
+command with `--confirm <digest>`. On a no, nothing is
 recorded: the push command then refuses to run (`no-destination-recorded`), workers stop and report that
 refusal instead of falling back to `git push`, and the owner pushes branches by hand. If
 `pushDestination.status` is already `matches` there is nothing to do (`unchanged`). With `destination-conflict`
-another record exists: show `existing` and `record`. FVS never replaces it; the owner checks the file, deletes it
-themselves and runs init again.
+another record exists: show `existing` and `record`, and name the variables in `changedVariables` when it is
+printed. FVS never replaces it; the owner checks the file, deletes it themselves and runs init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
 `unknown` (below) so that a resume does not ask again.
@@ -346,8 +351,9 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    output, `contract` in every preview), not in your own words: it is a cooperative guard with hardening and not a
    security boundary. It checks its own command line, the repository and the destination. It does not run
    repository hooks for the push (it passes `--no-verify` and reads no hooks folder), so the owner's own pre-push
-   checks do not run for it, and it drops the listed git environment variables, among them the ones that name
-   configuration files. It trusts the owner's git setup, as any push the owner runs: ssh and transport
+   checks do not run for it, and it drops the listed git environment variables, except the git configuration
+   variables that the owner confirmed in the destination step: it keeps those with the confirmed values and refuses
+   to push when one is missing or has changed. It trusts the owner's git setup, as any push the owner runs: ssh and transport
    wrappers, credential helpers, URL rewrite rules, the record file and FVS itself, so anything that runs as the
    owner's user. Also say that a worker that runs a plain `git push` is not covered, and that the owner's other
    rules and permission mode decide it. Say that branch protection on the fork is still recommended. Never

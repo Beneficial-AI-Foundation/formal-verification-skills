@@ -155,11 +155,14 @@ What it does for this push, to harden it:
   set in git configuration (`hook.<name>.event`), and `core.hooksPath` is set to `/dev/null` so that git finds no
   hook in any hooks folder. Your own pre-push checks do not run for it.
 - git runs without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
-  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`,
-  `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs, `GIT_CONFIG_PARAMETERS`,
-  `GIT_NAMESPACE` and `GIT_EXEC_PATH`. Settings that reach git only through those variables are not used. The
-  configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are
-  not set through those variables.
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_NAMESPACE` and `GIT_EXEC_PATH`. It also runs without
+  `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
+  `GIT_CONFIG_VALUE_n` pairs and `GIT_CONFIG_PARAMETERS`, except those that were set when you confirmed the
+  destination at init: init shows them with their values and records a hash of each, the command keeps exactly
+  those, and it refuses to push when one of them is missing or has another value. To find its record, the command
+  first asks git where the repository is with the git configuration variables that are set. It makes every other git
+  call with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh,
+  credential and transport settings that are not set through those variables.
 - No push option is sent.
 
 What it trusts, and so does not protect against:
@@ -168,6 +171,8 @@ What it trusts, and so does not protect against:
 - ssh and other transport wrappers (`GIT_SSH_COMMAND`, `core.sshCommand`, proxy and remote helpers): the command
   cannot tell where one of them sends the push.
 - Credential helpers.
+- The git configuration variables that you confirmed at init, the way you trust your own git configuration files:
+  whatever they set is used for the checks and for the push.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.
@@ -192,6 +197,10 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   branch, it is not a symbolic ref, and no tag has the same name.
 - no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
   section is named after it, and git reads the address as recorded.
+- every git configuration variable that init recorded is still set to the value you confirmed. If one is missing or
+  has another value, it refuses with `git-config-changed` and names the variable, never its value. It does not replace
+  the record: to accept the change, delete the record file and run the destination step of `/fvs:auto-init` again.
+  A variable that was not recorded is removed, and the command goes on without it.
 
 A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
 
@@ -208,7 +217,9 @@ them, and this command sends none. `--no-verify` skips the pre-push hook, includ
 configuration with `hook.<name>.event`, which `core.hooksPath` does not turn off. `core.hooksPath=/dev/null` makes git
 find no hook in any hooks folder. Every git call that the command makes, and every git call that the permissions
 helper makes itself, also runs without the variables listed under "What it does for this push", so the checks and the
-push see the same configuration.
+push see the same configuration. The exception is the git configuration variables that you confirmed at init, which
+the command keeps for its own calls. The helper's own calls keep none of them. In the tests, a push option set in a
+confirmed variable was not sent, because git applies the command's own `-c push.pushOption=` after it.
 
 The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
 `fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
@@ -271,6 +282,16 @@ Init records the address git would push to after its own rewriting. It never rep
 stops with `destination-conflict` and shows both. To record another destination, check the file, delete it yourself
 and run init again. The permission preview for a push rule shows this record, and the push rule is written only
 while the record still matches what init would record now.
+
+If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview prints each one with its
+value, and the record gains `gitConfigEnvironmentSha256`: a hash of each value, so the file never holds a value that
+may be a credential. The values are printed once, in that preview. Do not confirm a variable that holds a token: unset
+it and use a credential helper. Run the destination step where the workers run, so the recorded variables are the ones
+they have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer
+in a repository that another user owns without it. A variable that changes from one session to the next, such as a
+`GIT_CONFIG_GLOBAL` that names a new path each time, makes the push command refuse each time with `git-config-changed`.
+Give the sandbox a fixed value, or put that configuration in a file under the home folder, which git still reads.
 
 ### Push allow rules already in your settings
 
