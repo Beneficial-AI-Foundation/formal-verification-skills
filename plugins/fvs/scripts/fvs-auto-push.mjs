@@ -20,8 +20,10 @@
 //     [remote "<url>"] section names it, and git itself does not rewrite it.
 // Every git call that acts on the repository (the branch checks, the URL checks, the tip read and the push) names the git
 // directory and the work tree that were found and checked, so none of them finds a repository again from a directory.
-// Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
-// it; and a read of the shared git directory of the recorded project root.
+// Some calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
+// it; the same two again when git had to be asked with other git variables, or when the record confirms variables that the
+// first look did not use, so that the answer holds for the variables the push uses; and a read of the shared git directory
+// of the recorded project root.
 // The push uses an explicit full refspec without `+`, --no-follow-tags and -c push.followTags=false,
 // --recurse-submodules=no, -c push.pushOption= (no push option from any configuration), --no-verify (no pre-push hook,
 // also one set with hook.<name>.event) and -c core.hooksPath=/dev/null (no hook in any hooks folder), --porcelain and
@@ -55,7 +57,7 @@ export const CONTRACT = {
   ],
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
-    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except those that were set when you confirmed the destination at init: init shows them with their values and records a hash of each, the command keeps exactly those, and it refuses to push when one of them is missing or has another value. To find its record, the command first asks git where the repository is with the git configuration variables that are set. It makes every other git call with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
+    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except those that were set when you confirmed the destination at init: init shows them with their values and records a hash of each, the command keeps exactly those, and it refuses to push when one of them is missing or has another value. The one exception is the first look at where the repository is, which finds the record: when git cannot answer without those variables (a sandbox that sets safe.directory), that read-only call is made again with the ones that are set. Every other git call is made with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
     'No push option is sent.',
   ],
   trusts: [
@@ -407,23 +409,30 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     if (argv.length !== 2 || argv[0] !== '--branch' || !argv[1] || argv[1].startsWith('-')) refuse('usage', `${USAGE}; no other argument is accepted`);
     const branch = argv[1];
     // The record says which git configuration variables the user confirmed, and it is found through git, which may need one
-    // of those variables to answer at all (safe.directory in a sandbox). So git is first asked where the repository is with
-    // the variables that are set. That read-only answer is used for nothing but finding the record. Everything after it,
-    // starting with a second look at where the repository is, runs with only the variables that the record confirms.
+    // of those variables to answer at all (safe.directory in a sandbox). So git is asked where the repository is without
+    // any of them first, and only when it cannot answer is that read-only call made again with the variables that are set.
+    // The answer is used for nothing but finding the record. When the variables it was found with are not exactly the ones
+    // that the record confirms, git is asked again with only the confirmed ones, and every later call uses them too.
     const present = Object.keys(trustableVariables(env));
-    const first = locate(cwd, withTrusted(env, present));
+    let used = [];
+    let first;
+    try { first = locate(cwd, env); } catch (error) {
+      if (!(error instanceof Refuse) || error.code !== 'not-a-repository' || present.length === 0) throw error;
+      used = present;
+      first = locate(cwd, withTrusted(env, present));
+    }
     const record = readRecord(first.commonDir);
     const confirmed = confirmedVariables(record, env, first.commonDir);
     const gitEnv = withTrusted(env, confirmed);
     let found = first;
-    if (confirmed.length !== present.length) {
+    if (confirmed.length !== used.length) {
       try { found = locate(cwd, gitEnv); } catch (error) {
         if (!(error instanceof Refuse)) throw error;
         const unconfirmed = present.filter((name) => !confirmed.includes(name)).sort();
-        refuse(error.code, `${error.message}; this check ran without the git variables that init did not record (${unconfirmed.join(', ')})`);
+        refuse(error.code, unconfirmed.length ? `${error.message}; this check ran without the git variables that init did not record (${unconfirmed.join(', ')})` : error.message);
       }
       if (found.gitDir !== first.gitDir || found.commonDir !== first.commonDir || found.top !== first.top) {
-        refuse('wrong-repository', `git finds ${found.gitDir} when only the confirmed git variables are kept, and ${first.gitDir} when all are; nothing was pushed`);
+        refuse('wrong-repository', `with only the confirmed git variables git finds ${found.gitDir}, not ${first.gitDir} as it did first; nothing was pushed`);
       }
     }
     const wrongPlace = repositoryProblem(record, found, gitEnv);

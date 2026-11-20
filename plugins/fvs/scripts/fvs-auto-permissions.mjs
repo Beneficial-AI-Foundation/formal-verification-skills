@@ -527,8 +527,6 @@ function writeDestination(flags) {
   const preview = {
     projectRoot: root, file: state.file, record: destination.record,
     note: 'The push command pushes to this destination and checks that it runs in the repository whose shared git directory is the one recorded here. The file sits in the git directory, so it is not part of any commit; any session of your user account can change it, and so change where the command pushes.',
-    // The only place that prints the values: the user confirms them here. The record keeps a hash of each, not the value.
-    gitConfigVariables: destination.variables,
     gitConfigNote: shown.length
       ? `These git configuration variables are set in this session: ${shown.join(', ')}. If you confirm, the push command keeps exactly these, with these values, and refuses to push when one is missing or has another value; it removes every other git variable of its list. You trust them the way you trust your own git configuration files. The record holds a hash of each value, not the value.`
       : 'No git configuration variable is set in this session, so the push command runs without all of them (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT with its pairs, GIT_CONFIG_PARAMETERS).',
@@ -538,7 +536,8 @@ function writeDestination(flags) {
   if (state.status !== 'missing') {
     refuse('destination-conflict', `${state.file} already exists and is not what init would record now.${changedNote(state)} FVS never replaces it, because that would change where pushes go. To change the destination, check the file, delete it yourself, and run this command again.`, { ...preview, existing: state.existing ?? null, problem: state.problem ?? null, ...(state.changedVariables?.length ? { changedVariables: state.changedVariables } : {}) });
   }
-  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), preview);
+  // The values are printed here and nowhere else: the user confirms them in this preview. The record keeps a hash of each.
+  confirmationNeeded(flags, digestOf({ kind: 'destination', root, file: state.file, record: destination.record }), { ...preview, gitConfigVariables: destination.variables });
   if (destinationState(destination).status !== 'missing') refuse('changed-since-preview', `${state.file} appeared while this command ran; nothing was written. Show the user a new preview: a new digest needs a new yes.`);
   writeAtomic(state.file, JSON.stringify(destination.record, null, 2) + '\n');
   const reread = destinationState(destination);

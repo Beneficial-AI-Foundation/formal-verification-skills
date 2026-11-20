@@ -159,9 +159,10 @@ What it does for this push, to harden it:
   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
   `GIT_CONFIG_VALUE_n` pairs and `GIT_CONFIG_PARAMETERS`, except those that were set when you confirmed the
   destination at init: init shows them with their values and records a hash of each, the command keeps exactly
-  those, and it refuses to push when one of them is missing or has another value. To find its record, the command
-  first asks git where the repository is with the git configuration variables that are set. It makes every other git
-  call with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh,
+  those, and it refuses to push when one of them is missing or has another value. The one exception is the first
+  look at where the repository is, which finds the record: when git cannot answer without those variables (a sandbox
+  that sets safe.directory), that read-only call is made again with the ones that are set. Every other git call is
+  made with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh,
   credential and transport settings that are not set through those variables.
 - No push option is sent.
 
@@ -218,8 +219,10 @@ configuration with `hook.<name>.event`, which `core.hooksPath` does not turn off
 find no hook in any hooks folder. Every git call that the command makes, and every git call that the permissions
 helper makes itself, also runs without the variables listed under "What it does for this push", so the checks and the
 push see the same configuration. The exception is the git configuration variables that you confirmed at init, which
-the command keeps for its own calls. The helper's own calls keep none of them. In the tests, a push option set in a
-confirmed variable was not sent, because git applies the command's own `-c push.pushOption=` after it.
+the command keeps for its own calls. The permissions helper runs its destination checks with the variables that are
+set in its session, because it asks you to confirm them. Its look at the git status of a settings file runs without
+any. In the tests, a push option set in a confirmed variable was not sent, because git applies the command's own
+`-c push.pushOption=` after it.
 
 The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
 `fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
@@ -286,7 +289,7 @@ while the record still matches what init would record now.
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview prints each one with its
 value, and the record gains `gitConfigEnvironmentSha256`: a hash of each value, so the file never holds a value that
-may be a credential. The values are printed once, in that preview. Do not confirm a variable that holds a token: unset
+may be a credential. The values are printed only in that preview. Do not confirm a variable that holds a token: unset
 it and use a credential helper. Run the destination step where the workers run, so the recorded variables are the ones
 they have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer
 in a repository that another user owns without it. A variable that changes from one session to the next, such as a
