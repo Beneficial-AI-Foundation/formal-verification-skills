@@ -188,10 +188,10 @@ What it trusts, and so does not protect against:
 - The address that a remote of the repository holds with user information (a token) for the recorded host and
   OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the
   push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration
-  keeps working. The record, the messages and the receipt never show the token, and the command removes it, and the
-  user information that a rewrite rule adds to the address, from what git prints and from its own messages, whatever
-  the length of a user name or password. As with any git push, the address and its token are visible in the process
-  arguments of the local machine while git runs.
+  keeps working. The record, the messages and the receipt never show the token, and the command removes the secret
+  of such an address (its password, or its user part when it has no password) and of every address that a rewrite
+  rule makes of it from what git prints and from its own messages, whatever its length. As with any git push, the
+  address and its token are visible in the process arguments of the local machine while git runs.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.
@@ -340,13 +340,17 @@ addresses with user information for the destination are refused with `remote-amb
 keep one. The record and the receipt still hold the address without user information. Before git prints anything,
 the command collects every secret that the push can carry: the user information of the recorded address, of the
 address that a remote holds, and of each address that a `url.<base>.insteadOf` or `pushInsteadOf` rule makes of
-them, whether the rule is allowed or not. It takes each of them, the user and password parts and the base64 of the
-pair, whatever their length, out of what git prints (its error output and the result line) and out of the text of
-its own refusals, and shows an http address with user information as `https://***@host/...` everywhere else, so none
-of them is in any output, log or receipt, also after a failed push: git can print a token that is the user name of
-an address. A user name or password is replaced wherever it occurs in that text, so a short one, or one that is also
-a common word such as `git` or the name of the owner, can make a message look garbled. The fields that the command
-fills in itself, such as the destination, stay as they are. A refusal for a rewrite rule names the kind of rule, the
+them, whether the rule is allowed or not. It takes the secret of each of them out of what git prints (its error
+output and the result line) and out of the text of its own refusals, whatever its length, and shows an http address
+with user information as `https://***@host/...` everywhere else, so none of them is in any output, log or receipt,
+also after a failed push: git can print a token that is the user name of an address. When an address has a user name
+and a password, the password and the base64 of the pair are the secret, and the user name, a label such as
+`x-access-token` or `oauth2`, stays readable in text. With no password, or an empty one, the user part is the token
+and is replaced, and so is a user part next to `x-oauth-basic`, the fixed password of GitHub's older
+`TOKEN:x-oauth-basic` form. A secret is replaced wherever it occurs in that text, so a short one can make a message
+look garbled. The fields that the command fills in itself, such as the destination, stay as they are. The
+destination step of init cleans its own messages in the same way, with the secrets of the remote's addresses and of
+their rewrites. A refusal for a rewrite rule names the kind of rule, the
 scheme, host and port that it leads to and what differs from the recorded address (the scheme, host, port or
 repository), and never the rule or its text, because a rule can hold a credential. As
 with any git push, the address with its token is visible in the process arguments of the local machine
