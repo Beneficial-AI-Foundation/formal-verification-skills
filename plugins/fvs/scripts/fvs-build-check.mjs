@@ -1189,6 +1189,10 @@ const closureDigest = (closure) => digestOf([...closure].sort(([a], [b]) => (a <
 const moduleRel = (module) => `${module.replaceAll('.', '/')}.lean`;
 const inTrustedModule = (module) => isTrusted(moduleRel(module));
 
+// The refusal of an axiom that asserts something and is declared outside Trusted/, in one wording for both rules
+// that make it (the semantic comparison and the allowed-axioms list), so a run that applies both reports it once.
+const propOutsideTrusted = (id, n, name, module) => `the statement ${id} (${n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${module}); only a hand-written Trusted axiom bound to its accepted record may assert something`;
+
 // What the merged spec's statements, axioms and propositions are compared with at the head. `base` and
 // `head` come from parseDump; `recalled` are the names the spec files recall; `acceptedIds` are the ids
 // of the externals records the owner accepted.
@@ -1251,21 +1255,46 @@ export function semanticProblems({ base, head, recalled, acceptedIds = new Set()
   }
   const bindings = [];
   const cited = (dump, kind) => dump.docs.filter((doc) => doc[kind]);
+  // An axiom whose type is a proposition asserts something, so it is held to its accepted record and to exactly the
+  // proposition that record is tied to in the merged spec. `statement` is what a refusal is reported on, `subject` how
+  // a refusal names the axiom where it says what the axiom must do, and `lead` what it says first about why the
+  // axiom is held to this.
+  const bind = (axiom, statement, subject, lead) => {
+    const refuse = (detail) => add('trusted-axiom-unbound', statement, `${lead}${detail}`);
+    const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
+    const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
+    if (ids.length !== 1) return refuse(`${subject} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`);
+    const record = ids[0];
+    const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
+    if (props.length !== 1) return refuse(`the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`);
+    const proposition = props[0].name;
+    if (axiom.typeConst !== proposition) return refuse(`the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`);
+    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) return refuse(`the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`);
+    const citing = cited(head, 'axiom').filter((entry) => inTrustedModule(entry.module) && entry.cites.includes(record));
+    if (citing.length !== 1) return refuse(`the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`);
+    bindings.push({ axiom: axiom.name, record, proposition });
+    return undefined;
+  };
   for (const axiom of newAxioms) {
     if (NATIVE_AXIOM.test(axiom.name)) { add('native-added', axiom.name, `${axiom.name} is an axiom that native_decide or bv_decide added since the merged spec (in ${axiom.module}); the merged spec did not have it`); continue; }
     if (!inTrustedModule(axiom.module)) { add('axiom-not-allowed', axiom.name, `the axiom ${axiom.name} is new since the merged spec and is declared outside Trusted/ (in ${axiom.module})`); continue; }
-    const doc = cited(head, 'axiom').find((entry) => entry.name === axiom.name);
-    const ids = (doc?.cites ?? []).filter((id) => acceptedIds.has(id));
-    if (ids.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the new axiom ${axiom.name} must cite exactly one accepted externals record in its docstring (it cites ${ids.length})`); continue; }
-    const record = ids[0];
-    const props = cited(base, 'prop').filter((entry) => entry.cites.includes(record) && !inTrustedModule(entry.module) && isFrozen(moduleRel(entry.module)));
-    if (props.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is tied to ${props.length} propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom ${axiom.name} has nothing to assert`); continue; }
-    const proposition = props[0].name;
-    if (axiom.typeConst !== proposition) { add('trusted-axiom-unbound', axiom.name, `the axiom ${axiom.name} asserts ${axiom.typeConst ?? 'something that is not one proposition'}, but the record ${record} is tied to the proposition ${proposition} in the merged spec; an axiom must assert exactly that`); continue; }
-    if (closureDigest(closureOf(base.constants, proposition)) !== closureDigest(closureOf(head.constants, proposition))) { add('trusted-axiom-unbound', axiom.name, `the proposition ${proposition} that the record ${record} is tied to changed since the merged spec`); continue; }
-    const citing = cited(head, 'axiom').filter((entry) => inTrustedModule(entry.module) && entry.cites.includes(record));
-    if (citing.length !== 1) { add('trusted-axiom-unbound', axiom.name, `the record ${record} is cited by ${citing.length} axioms (${citing.map((entry) => entry.name).join(', ')}); it ties one`); continue; }
-    bindings.push({ axiom: axiom.name, record, proposition });
+    bind(axiom, axiom.name, `the new axiom ${axiom.name}`, '');
+  }
+  // Every proposition-valued axiom of the merged spec that a statement rests on is held to the same: a hand-written
+  // Trusted axiom citing one accepted record and asserting exactly that record's proposition, whether or not an
+  // allowed-axioms list is given (the list says where a name came from, this says what the axiom asserts).
+  const bound = new Set();
+  for (const [id, now] of head.recalls) {
+    for (const rest of now.rests) {
+      for (const name of rest.axioms) {
+        const axiom = head.constants.get(name);
+        if (!axiom || axiom.kind !== 'axiom' || !axiom.asserts || standard.has(name) || NATIVE_AXIOM.test(name) || !baseAxioms.has(name)) continue;
+        if (!inTrustedModule(axiom.module)) { add('prop-axiom-outside-trusted', id, propOutsideTrusted(id, rest.n, name, axiom.module)); continue; }
+        if (bound.has(name)) continue;
+        bound.add(name);
+        bind(axiom, id, 'it', `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, and `);
+      }
+    }
   }
   return { problems, statements, bindings };
 }
@@ -1297,7 +1326,7 @@ export function allowedProblems({ head, recalledFiles, allowed }) {
         if (outside.length > 0) problems.push({ kind: 'axiom-not-allowed', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on the ${outside.length === 1 ? 'axiom' : 'axioms'} ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ` and ${outside.length - 3} more` : ''}, which the allowed axioms${where} do not name` });
         for (const name of resting) {
           const constant = asserts(name);
-          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: `the statement ${id} (${rest.n}) rests on ${name}, an axiom whose type is a proposition, declared outside Trusted/ (in ${constant.module}); only a hand-written Trusted axiom bound to its accepted record may assert something` });
+          if (constant && !inTrustedModule(constant.module)) problems.push({ kind: 'prop-axiom-outside-trusted', file, statement: id, detail: propOutsideTrusted(id, rest.n, name, constant.module) });
         }
       }
     }
@@ -1792,7 +1821,12 @@ function leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasP
   const base = dumpOf('base', baseRoot);
   if (base.error) return base;
   const { problems, statements, bindings } = semanticProblems({ base: base.dump, head: head.dump, recalled: [...recalled].sort(), acceptedIds });
-  if (allowed) problems.push(...allowedProblems({ head: head.dump, recalledFiles, allowed }));
+  if (allowed) {
+    // A refusal that both the comparison and the list make is reported once, with the spec file the list knows.
+    const listed = allowedProblems({ head: head.dump, recalledFiles, allowed });
+    const same = (a, b) => a.kind === b.kind && a.statement === b.statement && a.detail === b.detail;
+    problems.splice(0, problems.length, ...problems.filter((problem) => !listed.some((other) => same(problem, other))), ...listed);
+  }
   return { problems, statements, bindings, toolchain: head.dump.toolchain, dumps: { base: base.sha256, head: head.sha256 } };
 }
 

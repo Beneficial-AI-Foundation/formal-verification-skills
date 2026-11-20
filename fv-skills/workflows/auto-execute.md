@@ -35,7 +35,10 @@ merge and the proof pull request").
    proposition, a `Prop` definition in `formal/specs/Defs` of the merged spec whose docstring cites the same
    record id in backticks; the spec pull request is where that definition is written. The docstring
    citation is how the record and its proposition are tied in this release; an explicit field on the
-   record that names the proposition is the planned stronger form, for runs after this release.
+   record that names the proposition is the planned stronger form, for runs after this release. The
+   check holds every hand-written axiom whose type is a proposition that a statement rests on to this,
+   the merged spec's own included, whether or not a list of allowed axioms is given: it must be in
+   `formal/trusted`, cite one accepted record, and state exactly that record's proposition.
    `native_decide` and `bv_decide` are fine in scratch work, but the check refuses a statement that
    now rests on an axiom they add (their generated axioms, or Lean's `ofReduceBool` and `trustCompiler`)
    and did not rest on it at the merged spec, so remove them before it runs. A statement that already
@@ -110,8 +113,9 @@ merge and the proof pull request").
    elaborated statement and every definition, instance or abbreviation it reaches must be the same, so
    a helper, notation or instance in a proof file that changes what an unchanged statement means is
    refused. The axioms a statement rests on are read from Lean, not from the guard text: Lean's three,
-   an axiom the merged spec already had, or a new axiom that is in `formal/trusted` and asserts exactly
-   its record's proposition (an axiom `: False` under an accepted record is refused). If the Lean
+   an axiom the merged spec already had (a proposition-valued one only when it is bound to its record,
+   as step 2 says), or a new axiom that is in `formal/trusted` and asserts exactly its record's
+   proposition (an axiom `: False` under an accepted record is refused). If the Lean
    program cannot run, or the merged spec does not build, the commit is not accepted. The JSON result is on stdout and the report for
    people is on stderr. Read `label` from the JSON: it is `accepted (build check)`,
    `build check failed: REASON`, or `built, integrity not checked` when no spec base was given or

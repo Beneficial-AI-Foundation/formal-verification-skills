@@ -1358,19 +1358,30 @@ describe('the allowed axioms', () => {
     [GAP]: { m: 'Trusted.Gaps', asserts: true },
     [ABOUT_TARGET]: { m: 'Trusted.Gaps', asserts: true },
   };
-  const axiomConstant = (name, { m, asserts }) => constant(name, { k: 'axiom', m, t: asserts ? 'a proposition' : 'a type', v: undefined, pr: asserts });
+  const axiomConstant = (name, { m, asserts, tc }) => constant(name, { k: 'axiom', m, t: asserts ? 'a proposition' : 'a type', v: undefined, pr: asserts, ...(tc ? { tc } : {}) });
+  // The hand-written axioms each cite their own accepted record, tied in the merged spec to a proposition of its own.
+  const RECORD = { [GAP]: 'gap-u32', [ABOUT_TARGET]: 'gap-sha2' };
+  const PROP = (name) => `Gap.${name.split('.').pop()}_prop`;
+  const accepting = (fx) => {
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), JSON.stringify(EXTERNALS(...Object.values(RECORD).map((id) => record({ id })))));
+    return fx;
+  };
   // The merged spec and the head both hold these axioms, so only the list is in question.
   const resting = (names, extra = {}) => {
+    const kind = (name) => extra[name] ?? AXIOMS[name] ?? { m: 'Extraction.Out', asserts: false };
+    const tied = names.filter((name) => RECORD[name] !== undefined && kind(name).asserts && kind(name).m.startsWith('Trusted.'));
     const dump = leanDump({
       recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...names] } },
-      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...names.map((name) => axiomConstant(name, extra[name] ?? AXIOMS[name] ?? { m: 'Extraction.Out', asserts: false }))],
+      docs: tied.flatMap((name) => [{ name: PROP(name), cites: [RECORD[name]], prop: true }, { name, m: kind(name).m, cites: [RECORD[name]], axiom: true }]),
+      constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...tied.map((name) => constant(PROP(name), { m: 'formal.specs.Defs.Gaps', t: 'Prop', v: 'a proposition' })),
+        ...names.map((name) => axiomConstant(name, tied.includes(name) ? { ...kind(name), tc: PROP(name) } : kind(name)))],
     });
     return { base: dump, head: dump };
   };
   const run = (fx, listText, dump, extra = []) => {
     const file = path.join(fx.base, 'allowed.json');
     write(file, listText);
-    return { file, result: check(fx, { args: ['--allow-axioms', file, ...extra], dump }) };
+    return { file, result: check(accepting(fx), { args: ['--allow-axioms', file, ...extra], dump }) };
   };
   const problemOf = (result, kind) => result.json.integrity.problems.find((problem) => problem.kind === kind);
 
@@ -1409,11 +1420,65 @@ describe('the allowed axioms', () => {
   });
 
   test('with no list given nothing changes, and the receipt says so', () => {
-    const fx = fixture();
+    const fx = accepting(fixture());
     const result = check(fx, { dump: resting([EXTERNAL, ABOUT_TARGET]) });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.json.allowAxioms, null);
     assert.match(result.stderr, /allowed axioms: no list given/);
+  });
+
+  // An axiom whose type is a proposition asserts something. One a statement rests on has to cite one accepted
+  // record and assert exactly that record's proposition, with a list or without one.
+  describe('a proposition-valued axiom that a statement rests on', () => {
+    const gap = ({ cites = RECORD[GAP], tc = PROP(GAP), m = 'Trusted.Gaps', rests = true, alsoCites = [] } = {}) => {
+      const dump = leanDump({
+        recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...(rests ? [GAP] : [])] } },
+        docs: [{ name: PROP(GAP), cites: [RECORD[GAP]], prop: true }, { name: GAP, m, cites: [...(cites === null ? [] : [cites]), ...alsoCites], axiom: true }],
+        constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), constant(PROP(GAP), { m: 'formal.specs.Defs.Gaps', t: 'Prop', v: 'a proposition' }), axiomConstant(GAP, { m, asserts: true, tc })],
+      });
+      return { base: dump, head: dump };
+    };
+    const without = (dump) => check(accepting(fixture()), { dump });
+    const refused = (result, kind = 'trusted-axiom-unbound') => {
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual([...new Set(result.json.integrity.problems.map((problem) => problem.kind))], [kind]);
+      assert.equal(problemOf(result, kind).statement, 'Dep.foo');
+      return problemOf(result, kind).detail;
+    };
+
+    test('one that cites its accepted record and asserts that record’s proposition is accepted, bound in the receipt, and its record is one the receipt depends on', () => {
+      const result = without(gap());
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: GAP, record: RECORD[GAP], proposition: PROP(GAP) }]);
+      assert.deepEqual(result.json.externals.records.map((entry) => entry.id), [RECORD[GAP]]);
+    });
+
+    test('one that cites no accepted record is refused without a list, naming the statement and the axiom', () => {
+      for (const cites of [null, 'gap-open']) {
+        assert.match(refused(without(gap({ cites }))), new RegExp(`^the statement Dep\\.foo \\(Dep\\.foo\\) rests on ${GAP.replaceAll('.', '\\.')}, an axiom whose type is a proposition, and it must cite exactly one accepted externals record in its docstring \\(it cites 0\\)$`), String(cites));
+      }
+      assert.match(refused(without(gap({ alsoCites: ['gap-sha2'] }))), /it cites 2\)$/, 'two accepted records are not one');
+    });
+
+    test('one that asserts another proposition than its record is tied to is refused', () => {
+      assert.match(refused(without(gap({ tc: 'Gap.other_prop' }))), new RegExp(`the axiom ${GAP.replaceAll('.', '\\.')} asserts Gap\\.other_prop, but the record gap-u32 is tied to the proposition ${PROP(GAP).replaceAll('.', '\\.')}`));
+    });
+
+    test('one declared outside Trusted is refused with a list and without, and reported once', () => {
+      const dump = gap({ m: 'Extraction.Out' });
+      assert.match(refused(without(dump), 'prop-axiom-outside-trusted'), /declared outside Trusted\/ \(in Extraction\.Out\)/);
+      const listed = run(fixture(), LIST(GAP), dump).result;
+      refused(listed, 'prop-axiom-outside-trusted');
+      assert.equal(listed.json.integrity.problems.length, 1);
+      assert.equal(listed.json.integrity.problems[0].file !== null, true, 'the spec file the list knows');
+    });
+
+    test('one that no statement rests on is not asked for a citation, and a data axiom outside Trusted is not asked for one at all', () => {
+      const idle = without(gap({ cites: null, rests: false }));
+      assert.equal(idle.status, 0, idle.stderr);
+      assert.deepEqual(idle.json.integrity.semantic.bindings, []);
+      assert.equal(without(resting([EXTERNAL])).status, 0);
+    });
   });
 
   test('an empty list allows only the three standard axioms', () => {
@@ -2277,14 +2342,45 @@ describe('real Lean: a statement that still reads the same but does not mean the
     });
   });
 
+  // A hand-written axiom that the merged spec already has asserts something, and a statement may rest on it
+  // only if it cites the accepted record whose proposition it states. This holds with no allowed-axioms list.
+  describe('a hand-written axiom of the merged spec that a statement rests on', () => {
+    const GUARD = (axiom) => `/-- 'Fx.foo_spec' depends on axioms: [${axiom}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`;
+    const trusted = (doc, type = 'Gap') => `import Fx.Specs.Defs.Gaps\n\n/-- ${doc} -/\naxiom Fx.gap_add_spec : ${type}\n`;
+    const proofs = (body) => `import Fx.Proofs.Helper\nimport Fx.Trusted.Gaps\n\ntheorem Fx.foo_spec : Gap := ${body}\n`;
+    const spec = (guard) => `import Fx.Proofs.P\n\nrecall Fx.foo_spec : Gap\n\n${guard}`;
+    const project = (doc, type) => realProject(
+      { 'Fx/Proofs/P.lean': proofs('Fx.gap_add_spec'), 'Fx/Specs/A.lean': spec(GUARD('Fx.gap_add_spec')) },
+      { baseFiles: { 'Fx/Trusted/Gaps.lean': trusted(doc, type), 'Fx/Proofs/P.lean': proofs('by\n  sorry'), 'Fx/Specs/A.lean': spec('#print axioms Fx.foo_spec\n') } },
+    );
+
+    test('one that cites its accepted record and states that record’s proposition is accepted, and the receipt binds it', () => {
+      const result = realCheck(project('Accepted assumption, `gap-add`.'));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
+      assert.deepEqual(result.json.externals.records.map((entry) => entry.id), ['gap-add']);
+    });
+
+    test('one that cites no record, or states something else than its record’s proposition, is refused', () => {
+      const none = realCheck(project('An assumption about addition.'));
+      assert.equal(none.status, 1, none.stderr);
+      assert.deepEqual(none.json.integrity.problems.map((problem) => problem.kind), ['trusted-axiom-unbound']);
+      assert.match(none.json.integrity.problems[0].detail, /rests on Fx\.gap_add_spec, an axiom whose type is a proposition, and it must cite exactly one accepted externals record in its docstring \(it cites 0\)/);
+      // The same sentence as the record's proposition, but written out: it is not that proposition's constant.
+      const other = realCheck(project('Accepted assumption, `gap-add`.', '∀ n : Nat, n + 0 = n'));
+      assert.equal(other.status, 1, other.stderr);
+      assert.ok(other.json.integrity.problems.some((problem) => problem.kind === 'trusted-axiom-unbound' && /asserts something that is not one proposition, but the record gap-add is tied to the proposition Gap/.test(problem.detail)), other.stderr);
+    });
+  });
+
   // The names a statement rests on come from Lean's environment, in full, and whether an axiom's type is a
   // proposition comes from Lean too. The axiom is declared in the merged spec, so only the list is in question.
   test('the allowed axioms are matched by full name; a proposition outside Trusted is refused even when listed', () => {
-    const rests = ({ folder, axiom, type, statement, proof }) => realProject({
+    const rests = ({ folder, axiom, type, statement, proof, doc = null }) => realProject({
       'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := ${proof}\n`,
       'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n/-- 'Fx.foo_spec' depends on axioms: [${axiom}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`,
     }, { baseFiles: {
-      [`Fx/${folder}/Out.lean`]: `axiom ${axiom} : ${type}\n`,
+      [`Fx/${folder}/Out.lean`]: `${doc === null ? '' : `import Fx.Specs.Defs.Gaps\n\n/-- ${doc} -/\n`}axiom ${axiom} : ${type}\n`,
       'Fx/Proofs/P.lean': `import Fx.${folder}.Out\n\ntheorem Fx.foo_spec : ${statement} := by\n  sorry\n`,
       'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n#print axioms Fx.foo_spec\n`,
     } });
@@ -2306,8 +2402,12 @@ describe('real Lean: a statement that still reads the same but does not mean the
     const generated = allowing(rests(prop), 'Fx.ext_fact');
     assert.equal(generated.status, 1, generated.stderr);
     assert.deepEqual(generated.json.integrity.problems.map((p) => p.kind), ['prop-axiom-outside-trusted']);
-    const handWritten = allowing(rests({ ...prop, folder: 'Trusted' }), 'Fx.ext_fact');
+    // A hand-written Trusted axiom passes when it cites its accepted record and states exactly that record's proposition.
+    const handWritten = allowing(rests({ ...prop, folder: 'Trusted', type: 'Gap', statement: 'Gap', doc: 'Accepted assumption, `gap-add`.' }), 'Fx.ext_fact');
     assert.equal(handWritten.status, 0, handWritten.stderr);
+    const uncited = allowing(rests({ ...prop, folder: 'Trusted', type: 'Gap', statement: 'Gap', doc: 'An assumption about addition.' }), 'Fx.ext_fact');
+    assert.equal(uncited.status, 1, 'a hand-written Prop axiom that cites no record is refused although listed');
+    assert.deepEqual(uncited.json.integrity.problems.map((p) => p.kind), ['trusted-axiom-unbound']);
   });
 
   // A stitched file ends with a block that makes Lean compare each alias with the constant it stands for, so the
