@@ -128,8 +128,21 @@ count as a stitch. In each case the reason says what to do.
 That the work is a single crate is a fact the extraction records when it prepares the copy; it is never what
 is left when nothing says otherwise. A copy that does not say whether it is one crate or several, such as a
 workspace prepared without a release folder, is refused, and so is a recorded extraction that lacks this fact:
-run the extraction again. A run of several crates that loses a crate's row or the crate list is not read as
-a smaller run; the crates stay owed until they are extracted again. A build-check receipt counts for a crate
+the state stays at the extraction until it is settled. Extracting again settles it. An extraction recorded
+by an earlier FVS lacks the fact only because it was made before the scope was kept, and it can be settled
+without extracting again: the workspace at the commit the extraction was made from (not the working tree,
+which has moved on) is read, and when it holds exactly one library crate, the owner confirms that and it is
+recorded. The release folder is the one the extraction used.
+
+```
+node "$AUTO" record-scope --project-root . --release DIR
+node "$AUTO" record-scope --project-root . --release DIR --confirm
+```
+
+The first call only reports what it found and writes nothing. Run the second only after the owner agrees. If
+the workspace holds several library crates, or the scan cannot tell, the command refuses and says so: a
+multi-crate extraction is needed. A run of several crates that loses a crate's row or the crate list is not
+read as a smaller run; the crates stay owed until they are extracted again. A build-check receipt counts for a crate
 with stitches only while the Lean checks it verified are exactly the ones the extraction recorded; after any
 other change the build check runs again.
 
