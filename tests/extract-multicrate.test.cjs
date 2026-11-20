@@ -11,7 +11,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
+const { tar, crateArchive, BLOCK } = require('./helpers/crate-archive.cjs');
 const { toySpec, cleanup, workspace, run: engine, prepared, specFile, attempted, step, completeUnit, complete } = require('./helpers/fake-multicrate-tools.cjs');
 
 after(cleanup);
@@ -176,22 +178,48 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
 
     // A registry package is bound by the Cargo.lock: the lock lists it with a registry source and the
     // checksum of its archive, and the archive that cargo kept under this run's CARGO_HOME has exactly
-    // that checksum. The source the LLBC reads lies under the same CARGO_HOME. The real hmac and sha2
-    // LLBCs reach no registry crate, so these cases are fixtures, not real data.
+    // that checksum. Every file of the package that the LLBC reads is then compared with that archive:
+    // a plain file in its place in cargo's unpacked copy, with the bytes of the archive's entry. The
+    // real hmac and sha2 LLBCs reach no registry crate, so these cases are fixtures, not real data.
     const INDEX = 'index.crates.io-1949cf8c6b5b557f';
-    const ARCHIVE = 'the bytes of the rand_core 0.10.1 archive';
-    const hash = (text) => crypto.createHash('sha256').update(text).digest('hex');
+    const PACKAGE = 'rand_core-0.10.1';
+    const LIB = 'pub fn next_u32() -> u32 { 4 }\n';
+    const MANIFEST = '[package]\nname = "rand_core"\nversion = "0.10.1"\n';
+    const DEEP = `src/${'nested_module_directory/'.repeat(5)}mod.rs`;
+    const hash = (data) => crypto.createHash('sha256').update(data).digest('hex');
     const lockEntry = ({ name = 'rand_core', version = '0.10.1', source = 'registry+https://github.com/rust-lang/crates.io-index', checksum = hash(ARCHIVE) } = {}) => `\n[[package]]\nname = "${name}"\nversion = "${version}"\n${source === null ? '' : `source = "${source}"\n`}${checksum === null ? '' : `checksum = "${checksum}"\n`}`;
-    // A workspace whose toy_app reads one registry source file (or none, with files: false).
-    const registryWorkspace = ({ lock = lockEntry(), archive = ARCHIVE, label = 'rand_core', reached = ['rand_core'], files = true, where } = {}) => {
+    // The archive of the package: every entry under its directory, as cargo's .crate files are.
+    const packageEntries = (files, directory = PACKAGE) => Object.entries(files).map(([name, data]) => ({ name: `${directory}/${name}`, data }));
+    const ARCHIVE = crateArchive(packageEntries({ 'Cargo.toml': MANIFEST, 'src/lib.rs': LIB, [DEEP]: 'pub fn deep() {}\n' }));
+    const write = (file, data) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, data);
+    };
+    // A workspace whose toy_app reads registry source files: reads names them relative to the package
+    // (none with files: false). The archive is the one cargo kept and the lock records its checksum, so
+    // a case differs from the valid one only in what its option changes. unpacked is cargo's unpacked
+    // copy; link puts the unpacked file, its directory or the package behind a symbolic link.
+    const registryWorkspace = ({ archive = ARCHIVE, lock, label = 'rand_core', reached = ['rand_core'], files = true, reads = ['src/lib.rs'], where, contents, unpacked = { 'Cargo.toml': MANIFEST, 'src/lib.rs': LIB, [DEEP]: 'pub fn deep() {}\n' }, link } = {}) => {
       const ws = workspace();
       const home = ws.tools.cargoHome;
-      const source = where ?? `${home}/registry/src/${INDEX}/rand_core-0.10.1/src/lib.rs`;
-      ws.behaviour({ toy_app: { extraCrates: reached, extraFiles: files ? [{ name: { Local: source }, crate_name: label }] : [] } });
-      if (lock !== null) fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), lock);
-      if (archive !== null) {
-        fs.mkdirSync(path.join(home, 'registry', 'cache', INDEX), { recursive: true });
-        fs.writeFileSync(path.join(home, 'registry', 'cache', INDEX, 'rand_core-0.10.1.crate'), archive);
+      const base = `${home}/registry/src/${INDEX}/${PACKAGE}`;
+      const sources = files ? reads.map((name) => ({ name: { Local: where ?? `${base}/${name}` }, crate_name: label, ...(contents === undefined ? {} : { contents }) })) : [];
+      ws.behaviour({ toy_app: { extraCrates: reached, extraFiles: sources } });
+      if (lock !== null) fs.appendFileSync(path.join(ws.project, 'Cargo.lock'), lock ?? lockEntry({ checksum: hash(archive ?? ARCHIVE) }));
+      if (archive !== null) write(path.join(home, 'registry', 'cache', INDEX, `${PACKAGE}.crate`), archive);
+      const elsewhere = path.join(ws.root, 'elsewhere');
+      for (const [name, data] of Object.entries(unpacked ?? {})) write(path.join(link === undefined ? base : path.join(elsewhere, PACKAGE), name), data);
+      if (link === 'package') {
+        fs.mkdirSync(path.dirname(base), { recursive: true });
+        fs.symlinkSync(path.join(elsewhere, PACKAGE), base);
+      }
+      if (link === 'directory') {
+        fs.mkdirSync(base, { recursive: true });
+        fs.symlinkSync(path.join(elsewhere, PACKAGE, 'src'), path.join(base, 'src'));
+      }
+      if (link === 'file') {
+        fs.mkdirSync(path.join(base, 'src'), { recursive: true });
+        fs.symlinkSync(path.join(elsewhere, PACKAGE, 'src', 'lib.rs'), path.join(base, 'src', 'lib.rs'));
       }
       return ws;
     };
@@ -208,13 +236,99 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
       assert.deepEqual(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core'), { crate: 'rand_core', kind: 'external', origin: 'registry', package: 'rand_core', version: '0.10.1', checksum: hash(ARCHIVE) });
     });
 
+    it('binds every file the LLBC reads from the package to the archive, whatever the length of its path', () => {
+      const out = complete(registryWorkspace({ reads: ['src/lib.rs', DEEP, 'Cargo.toml'] }));
+      assert.equal(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core').checksum, hash(ARCHIVE));
+      // Contents the LLBC carries for a registry file are the archive's bytes too.
+      assert.doesNotThrow(() => complete(registryWorkspace({ contents: LIB })));
+    });
+
+    const looksDifferent = /the registry file .*rand_core-0\.10\.1\/src\/lib\.rs \(crate "rand_core"\) differs from rand_core-0\.10\.1\/src\/lib\.rs in rand_core-0\.10\.1\.crate, whose checksum the lock records/;
+
+    // The first cases keep the archive valid and its checksum equal to the lock's, so the refusal is the
+    // file the LLBC read, not the archive. The later ones change what the archive holds, or damage it.
+    it('refuses a registry file whose bytes differ from the archive', () => {
+      refusedRegistry({ unpacked: { 'src/lib.rs': `${LIB}// patched after unpacking\n` } }, looksDifferent);
+      refusedRegistry({ unpacked: { 'src/lib.rs': '' } }, looksDifferent);
+    });
+
+    it('refuses a registry file that is missing from cargo\'s unpacked copy', () => {
+      refusedRegistry({ unpacked: null }, /the registry file .*src\/lib\.rs \(crate "rand_core"\) is missing from cargo's unpacked rand_core-0\.10\.1, so it cannot be compared with rand_core-0\.10\.1\.crate/);
+    });
+
+    it('refuses a registry file that is redirected by a symbolic link, at the file, its directory or the package', () => {
+      refusedRegistry({ link: 'file' }, /the registry file .*src\/lib\.rs \(crate "rand_core"\) is a symbolic link; the source the LLBC read has to be a plain file/);
+      refusedRegistry({ link: 'directory' }, /the registry file .*src\/lib\.rs \(crate "rand_core"\) resolves to .*elsewhere.*, not to its place .*registry\/src\/index\.crates\.io-1949cf8c6b5b557f\/rand_core-0\.10\.1\/src\/lib\.rs in the unpacked rand_core-0\.10\.1/);
+      refusedRegistry({ link: 'package' }, /resolves to .*elsewhere.*, not to its place/);
+    });
+
+    it('binds a registry file written with a parent step by the place it resolves to, and refuses one whose step crosses a link', () => {
+      const written = (home) => `${home}/registry/src/${INDEX}/${PACKAGE}/src/../src/lib.rs`;
+      const ws = registryWorkspace({});
+      ws.behaviour({ toy_app: { extraCrates: ['rand_core'], extraFiles: [{ name: { Local: written(ws.tools.cargoHome) }, crate_name: 'rand_core' }] } });
+      const out = complete(ws);
+      assert.equal(charonRecord(out, 'toy_app').llbc.foreignCrates.find((entry) => entry.crate === 'rand_core').checksum, hash(ARCHIVE));
+      // With src behind a link, the same written path leads to a file at another place.
+      const linked = registryWorkspace({ link: 'directory' });
+      linked.behaviour({ toy_app: { extraCrates: ['rand_core'], extraFiles: [{ name: { Local: written(linked.tools.cargoHome) }, crate_name: 'rand_core' }] } });
+      const { out: refusedOut } = attempted(linked);
+      const charon = step(linked, refusedOut, 'charon', 'toy_app');
+      assert.equal(charon.status, 9, charon.stdout);
+      assert.match(charon.result.message, /resolves to .*elsewhere.*, not to its place/);
+    });
+
+    it('refuses a file that is in the unpacked package but not in the valid archive whose checksum the lock records', () => {
+      refusedRegistry({ unpacked: { 'src/lib.rs': LIB, 'src/injected.rs': 'pub fn injected() {}\n' }, reads: ['src/lib.rs', 'src/injected.rs'] }, /the registry file .*src\/injected\.rs \(crate "rand_core"\) is not a file of rand_core-0\.10\.1\.crate, whose checksum the lock records: the archive holds no rand_core-0\.10\.1\/src\/injected\.rs/);
+    });
+
+    it('refuses a file of the unpacked package that the archive does not hold, or holds as something else', () => {
+      const without = crateArchive(packageEntries({ 'Cargo.toml': MANIFEST }));
+      refusedRegistry({ archive: without }, /is not a file of rand_core-0\.10\.1\.crate, whose checksum the lock records: the archive holds no rand_core-0\.10\.1\/src\/lib\.rs/);
+      refusedRegistry({ archive: crateArchive(packageEntries({ 'Cargo.toml': MANIFEST }, 'other-0.1.0')) }, /the archive holds no rand_core-0\.10\.1\/src\/lib\.rs/);
+      const asLink = crateArchive([{ name: `${PACKAGE}/src/lib.rs`, type: '2', link: '../../elsewhere.rs' }]);
+      refusedRegistry({ archive: asLink }, /rand_core-0\.10\.1\/src\/lib\.rs is not a regular file in rand_core-0\.10\.1\.crate/);
+      const asDirectory = crateArchive([{ name: `${PACKAGE}/src/lib.rs/`, type: '5' }]);
+      refusedRegistry({ archive: asDirectory }, /rand_core-0\.10\.1\/src\/lib\.rs is not a regular file in rand_core-0\.10\.1\.crate/);
+    });
+
+    it('refuses contents in the LLBC that are not the bytes of the archive', () => {
+      refusedRegistry({ contents: `${LIB}// not what is in the package\n` }, /the LLBC's contents of .*src\/lib\.rs \(crate "rand_core"\) are not the bytes of rand_core-0\.10\.1\/src\/lib\.rs in rand_core-0\.10\.1\.crate/);
+      refusedRegistry({ contents: 7 }, /the LLBC's contents of .* are not the bytes of/);
+    });
+
+    it('says when two archive entries differ only in case, which a case-insensitive filesystem keeps one of', () => {
+      const clash = crateArchive(packageEntries({ 'src/lib.rs': LIB, 'src/Lib.rs': 'pub fn other() {}\n' }));
+      refusedRegistry({ archive: clash, unpacked: { 'src/lib.rs': 'pub fn other() {}\n' } }, /another entry whose name differs only in case, and a case-insensitive filesystem keeps one of the two/);
+    });
+
+    it('refuses an archive that is not a well-formed package archive, though its checksum is the lock\'s', () => {
+      const entries = packageEntries({ 'src/lib.rs': LIB });
+      const raw = tar(entries);
+      const damaged = Buffer.from(raw);
+      damaged[0] ^= 1;
+      const cases = [
+        ['not gzip', Buffer.from('this is not a gzip archive'), /it is not a readable gzip archive/],
+        ['a repeated entry', crateArchive([...entries, ...entries]), /the entry "rand_core-0\.10\.1\/src\/lib\.rs" appears twice/],
+        ['an unknown entry type', crateArchive([...entries, { name: `${PACKAGE}/odd`, type: 'g' }]), /has the type "g", which this reader does not know/],
+        ['a wrong header checksum', zlib.gzipSync(damaged), /has a wrong checksum/],
+        ['a size past the end', zlib.gzipSync(raw.subarray(0, BLOCK + 8)), /runs past the end of the archive/],
+        ['bytes after the end marker', zlib.gzipSync(Buffer.concat([raw, Buffer.alloc(BLOCK, 1)])), /bytes follow the end of the archive/],
+        ['no end marker', crateArchive(entries, { end: false }), /the archive has no end marker/],
+        ['an entry outside the package', crateArchive([...entries, { name: '../escape.rs', data: 'x' }]), /which is not a path inside the package/],
+      ];
+      for (const [name, archive, why] of cases) {
+        refusedRegistry({ archive }, new RegExp(`the archive rand_core-0\\.10\\.1\\.crate in the cargo cache has the checksum the Cargo\\.lock records, but it cannot be read as a package: .*${why.source}`));
+        assert.ok(name);
+      }
+    });
+
     it('refuses a registry package the lock does not list, lists without a registry source or checksum, or whose archive is missing or different', () => {
       refusedRegistry({ lock: null }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock in the copy/);
       refusedRegistry({ lock: lockEntry({ source: 'git+https://github.com/rust-random/rand#abcdef' }) }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock/);
       refusedRegistry({ lock: lockEntry({ source: null }) }, /but rand_core-0\.10\.1 is not a registry package of the Cargo\.lock/);
       refusedRegistry({ lock: lockEntry({ checksum: null }) }, /records no checksum for rand_core-0\.10\.1, so the source the LLBC reads/);
       refusedRegistry({ archive: null }, /the cargo cache holds no archive .*rand_core-0\.10\.1\.crate, so the checksum of rand_core-0\.10\.1 in the Cargo\.lock cannot be checked/);
-      refusedRegistry({ archive: 'different bytes' }, /the archive rand_core-0\.10\.1\.crate in the cargo cache hashes to [0-9a-f]{64}, not the [0-9a-f]{64} that the Cargo\.lock records for it/);
+      refusedRegistry({ archive: 'different bytes', lock: lockEntry() }, /the archive rand_core-0\.10\.1\.crate in the cargo cache hashes to [0-9a-f]{64}, not the [0-9a-f]{64} that the Cargo\.lock records for it/);
     });
 
     it('refuses a path that only looks like a registry path', () => {
@@ -241,9 +355,11 @@ describe('multi-crate extraction: the LLBC identity rule', () => {
     });
 
     it('refuses one crate label that two different packages stand behind', () => {
-      const ws = registryWorkspace({ files: false, lock: lockEntry() + lockEntry({ version: '0.9.0', checksum: hash('the 0.9.0 archive') }) });
-      fs.writeFileSync(path.join(ws.tools.cargoHome, 'registry', 'cache', INDEX, 'rand_core-0.9.0.crate'), 'the 0.9.0 archive');
+      const older = crateArchive(packageEntries({ 'src/lib.rs': LIB }, 'rand_core-0.9.0'));
+      const ws = registryWorkspace({ files: false, lock: lockEntry() + lockEntry({ version: '0.9.0', checksum: hash(older) }) });
       const home = ws.tools.cargoHome;
+      write(path.join(home, 'registry', 'cache', INDEX, 'rand_core-0.9.0.crate'), older);
+      for (const version of ['0.10.1', '0.9.0']) write(path.join(home, 'registry', 'src', INDEX, `rand_core-${version}`, 'src', 'lib.rs'), LIB);
       ws.behaviour({ toy_app: { extraCrates: ['rand_core'], extraFiles: ['0.10.1', '0.9.0'].map((version) => ({ name: { Local: `${home}/registry/src/${INDEX}/rand_core-${version}/src/lib.rs` }, crate_name: 'rand_core' })) } });
       const { out } = attempted(ws);
       const charon = step(ws, out, 'charon', 'toy_app');

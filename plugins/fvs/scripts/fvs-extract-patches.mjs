@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const MODES = ['translation-patches', 'legacy-source-ledger'];
 const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
@@ -2430,6 +2431,144 @@ function lockPackages(text) {
   return byDirectory;
 }
 
+// BEGIN CRATE ARCHIVE READER
+// A .crate is a gzip-compressed tar. This reader indexes it without unpacking anything, and it fails
+// closed: a header whose checksum is wrong, a type of entry it does not know, an entry path given twice,
+// a size that runs past the end, bytes after the end marker or an archive that is too large is an error,
+// never an entry that is skipped.
+const CRATE_ARCHIVE_LIMIT = 1 << 30;
+
+function tarOctal(block, from, to) {
+  if ((block[from] & 0x80) !== 0) {
+    // Base-256 numbers (GNU) carry sizes that do not fit the octal field.
+    let value = 0;
+    for (let at = from + 1; at < to; at += 1) value = value * 256 + block[at];
+    return value;
+  }
+  const text = block.toString('latin1', from, to).replace(/\0.*$/s, '').trim();
+  if (!/^[0-7]*$/.test(text)) throw new Error(`a number field is not octal (${JSON.stringify(text)})`);
+  return text === '' ? 0 : parseInt(text, 8);
+}
+
+function tarString(block, from, to) {
+  const end = block.indexOf(0, from);
+  return block.toString('utf8', from, end === -1 || end > to ? to : end);
+}
+
+function paxRecords(data) {
+  const records = {};
+  let at = 0;
+  while (at < data.length) {
+    const space = data.indexOf(0x20, at);
+    const length = Number(data.toString('latin1', at, space));
+    if (space === -1 || !Number.isInteger(length) || length < space - at + 3 || at + length > data.length || data[at + length - 1] !== 0x0a) throw new Error('a pax header record is malformed');
+    const record = data.toString('utf8', space + 1, at + length - 1);
+    const equals = record.indexOf('=');
+    if (equals < 1) throw new Error('a pax header record has no key');
+    records[record.slice(0, equals)] = record.slice(equals + 1);
+    at += length;
+  }
+  return records;
+}
+
+// The entries of a .crate by path: { kind: 'file' | 'directory', data } (the bytes of a regular file),
+// or { kind: 'other' } for a link, device or any other entry that is not a plain file.
+function crateEntries(archive) {
+  let tar;
+  try {
+    tar = zlib.gunzipSync(archive, { maxOutputLength: CRATE_ARCHIVE_LIMIT });
+  } catch (error) {
+    throw new Error(`it is not a readable gzip archive (${error.message})`);
+  }
+  const entries = new Map();
+  let at = 0;
+  let longName = null;
+  let pax = {};
+  while (at + 512 <= tar.length) {
+    const start = at;
+    const block = tar.subarray(at, at + 512);
+    if (block.every((byte) => byte === 0)) {
+      if (tar.subarray(start).some((byte) => byte !== 0)) throw new Error('bytes follow the end of the archive');
+      return entries;
+    }
+    let sum = 0;
+    for (let index = 0; index < 512; index += 1) sum += index >= 148 && index < 156 ? 0x20 : block[index];
+    if (tarOctal(block, 148, 156) !== sum) throw new Error(`the header at byte ${start} has a wrong checksum`);
+    const flag = String.fromCharCode(block[156] === 0 ? 0x30 : block[156]);
+    const size = pax.size === undefined ? tarOctal(block, 124, 136) : Number(pax.size);
+    if (!Number.isSafeInteger(size) || size < 0 || start + 512 + size > tar.length) throw new Error(`the entry at byte ${start} runs past the end of the archive`);
+    const data = tar.subarray(start + 512, start + 512 + size);
+    at = start + 512 + Math.ceil(size / 512) * 512;
+    if (flag === 'L') {
+      longName = tarString(data, 0, data.length);
+      continue;
+    }
+    if (flag === 'x') {
+      pax = paxRecords(data);
+      continue;
+    }
+    if (!['0', '5', '1', '2', '3', '4', '6', '7'].includes(flag)) throw new Error(`the entry at byte ${start} has the type ${JSON.stringify(flag)}, which this reader does not know`);
+    const magic = block.toString('latin1', 257, 263);
+    const prefix = magic.startsWith('ustar') ? tarString(block, 345, 500) : '';
+    const own = tarString(block, 0, 100);
+    const name = pax.path ?? longName ?? (prefix === '' ? own : `${prefix}/${own}`);
+    longName = null;
+    pax = {};
+    const normal = path.posix.normalize(name).replace(/\/+$/, '');
+    if (normal === '' || normal === '.' || path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')) throw new Error(`an entry is named ${JSON.stringify(name)}, which is not a path inside the package`);
+    if (entries.has(normal)) throw new Error(`the entry ${JSON.stringify(normal)} appears twice`);
+    entries.set(normal, flag === '0' ? { kind: 'file', data } : flag === '5' ? { kind: 'directory' } : { kind: 'other' });
+  }
+  throw new Error('the archive has no end marker');
+}
+// END CRATE ARCHIVE READER
+
+
+// What the LLBC read for a registry package, tied to the archive whose checksum the Cargo.lock
+// records. The unpacked file has to be a plain file whose real path is exactly its place in cargo's
+// unpacked copy of that package (no link at any component), has to be an entry of the archive, and
+// has to hold the archive entry's bytes; contents the LLBC carries have to be those bytes too. A
+// changed, missing, redirected or non-archive file is a problem, whatever the checksum says.
+function registrySourceProblems(entry, kind, entries) {
+  const where = entry.name.Local;
+  const normal = path.posix.normalize(where);
+  const label = JSON.stringify(entry.crate_name);
+  const archiveName = `${kind.directory}.crate`;
+  const relative = normal.slice(`${kind.home}/registry/src/${kind.index}/${kind.directory}/`.length);
+  const expected = path.join(realOrSelf(kind.home), 'registry', 'src', kind.index, kind.directory, ...relative.split('/'));
+  let stat;
+  let real;
+  try {
+    stat = fs.lstatSync(where, { throwIfNoEntry: false });
+    if (stat?.isFile()) real = fs.realpathSync(where);
+  } catch (error) {
+    return [`the registry file ${where} (crate ${label}) cannot be examined (${error.code ?? error.message}), so it cannot be compared with ${archiveName}`];
+  }
+  if (!stat) return [`the registry file ${where} (crate ${label}) is missing from cargo's unpacked ${kind.directory}, so it cannot be compared with ${archiveName}`];
+  if (stat.isSymbolicLink()) return [`the registry file ${where} (crate ${label}) is a symbolic link; the source the LLBC read has to be a plain file of the unpacked ${kind.directory}`];
+  if (!stat.isFile()) return [`the registry file ${where} (crate ${label}) is not a regular file`];
+  if (real !== expected) return [`the registry file ${where} (crate ${label}) resolves to ${real}, not to its place ${expected} in the unpacked ${kind.directory}`];
+  const member = `${kind.directory}/${relative}`;
+  const found = entries.get(member);
+  if (found === undefined) return [`the registry file ${where} (crate ${label}) is not a file of ${archiveName}, whose checksum the lock records: the archive holds no ${member}`];
+  if (found.kind !== 'file') return [`${member} is not a regular file in ${archiveName}`];
+  const problems = [];
+  let bytes;
+  try {
+    bytes = fs.readFileSync(where);
+  } catch (error) {
+    return [`the registry file ${where} (crate ${label}) cannot be read (${error.code ?? error.message}), so it cannot be compared with ${archiveName}`];
+  }
+  if (!found.data.equals(bytes)) {
+    const collides = [...entries.keys()].some((name) => name !== member && name.toLowerCase() === member.toLowerCase());
+    problems.push(`the registry file ${where} (crate ${label}) differs from ${member} in ${archiveName}, whose checksum the lock records${collides ? '; the archive holds another entry whose name differs only in case, and a case-insensitive filesystem keeps one of the two' : ''}`);
+  }
+  if (entry.contents !== null && entry.contents !== undefined && (typeof entry.contents !== 'string' || !found.data.equals(Buffer.from(entry.contents, 'utf8')))) {
+    problems.push(`the LLBC's contents of ${where} (crate ${label}) are not the bytes of ${member} in ${archiveName}`);
+  }
+  return problems;
+}
+
 // What one file of the LLBC is, from the path Charon wrote (the forms of real Charon 0.1.315 output):
 // a path relative to the copy (or absolute, under it) is a file of the copy; /rustc/library/... is
 // the toolchain; <cargo home>/registry/src/<index>/<name>-<version>/... is a registry package, but
@@ -2511,7 +2650,7 @@ function inspectLlbc(file, invocation, sources) {
   const lock = lockPackages(fs.existsSync(path.join(invocation.tree, LOCK_FILE)) ? fs.readFileSync(path.join(invocation.tree, LOCK_FILE), 'utf8') : '');
   const externals = new Map();
   const cargoHomes = [...new Set([invocation.env?.CARGO_HOME, realOrSelf(invocation.env?.CARGO_HOME ?? '')].filter((home) => typeof home === 'string' && home !== '' && path.isAbsolute(home)))];
-  const archiveHashes = new Map();
+  const archives = new Map();
   // A crate label has exactly one identity: the toolchain, or one package of the Cargo.lock with its
   // checksum. A second, different one is refused.
   const bind = (crate, identity, where) => {
@@ -2533,8 +2672,10 @@ function inspectLlbc(file, invocation, sources) {
     if (kind.form === 'registry') {
       // A registry package is bound by the Cargo.lock: it lists the package with a registry source and
       // the checksum of its archive, and the archive that cargo kept in this run's cache has exactly
-      // that checksum. The label may be neither a declared crate (whose sources are files of the copy)
-      // nor a crate of the toolchain, whatever the path looks like.
+      // that checksum. Every file the LLBC read from the package is then compared with the archive:
+      // a plain file in its place in cargo's unpacked copy, holding the bytes of the archive's entry.
+      // The label may be neither a declared crate (whose sources are files of the copy) nor a crate
+      // of the toolchain, whatever the path looks like.
       const locked = lock.get(kind.directory);
       const archive = path.join(kind.home, 'registry', 'cache', kind.index, `${kind.directory}.crate`);
       if (typeof entry.crate_name !== 'string' || declaredLabels.has(entry.crate_name) || TOOLCHAIN_CRATES.has(entry.crate_name)) {
@@ -2546,9 +2687,33 @@ function inspectLlbc(file, invocation, sources) {
       } else if (!fs.existsSync(archive)) {
         problems.push(`the cargo cache holds no archive ${archive}, so the checksum of ${kind.directory} in the ${LOCK_FILE} cannot be checked against the package the LLBC reads (${entry.name.Local}, crate ${label}); fetch it with the same CARGO_HOME`);
       } else {
-        if (!archiveHashes.has(archive)) archiveHashes.set(archive, sha256(fs.readFileSync(archive)));
-        if (archiveHashes.get(archive) !== locked.checksum) problems.push(`the archive ${kind.directory}.crate in the cargo cache hashes to ${archiveHashes.get(archive)}, not the ${locked.checksum} that the ${LOCK_FILE} records for it`);
-        else bind(entry.crate_name, { origin: 'registry', package: locked.name, version: locked.version, checksum: locked.checksum }, entry.name.Local);
+        if (!archives.has(archive)) {
+          const bytes = fs.readFileSync(archive);
+          const hash = sha256(bytes);
+          let entries = null;
+          let unreadable = null;
+          if (hash === locked.checksum) {
+            try {
+              entries = crateEntries(bytes);
+            } catch (error) {
+              unreadable = error.message;
+            }
+          }
+          archives.set(archive, { hash, entries, unreadable, reported: false });
+        }
+        const loaded = archives.get(archive);
+        if (loaded.entries === null) {
+          if (!loaded.reported) {
+            loaded.reported = true;
+            problems.push(loaded.hash !== locked.checksum
+              ? `the archive ${kind.directory}.crate in the cargo cache hashes to ${loaded.hash}, not the ${locked.checksum} that the ${LOCK_FILE} records for it`
+              : `the archive ${kind.directory}.crate in the cargo cache has the checksum the ${LOCK_FILE} records, but it cannot be read as a package: ${loaded.unreadable}`);
+          }
+        } else {
+          const found = registrySourceProblems(entry, kind, loaded.entries);
+          problems.push(...found);
+          if (found.length === 0) bind(entry.crate_name, { origin: 'registry', package: locked.name, version: locked.version, checksum: locked.checksum }, entry.name.Local);
+        }
       }
       continue;
     }

@@ -470,7 +470,16 @@ the tools ran with (a path that merely ends like one is not a registry path), is
 only when all of these hold: its label is neither a declared crate nor a crate of the toolchain, the
 `Cargo.lock` in the copy lists `<name>-<version>` with a `registry+` source and a checksum, and the
 archive that cargo kept at `<cargo home>/registry/cache/<index>/<name>-<version>.crate` has exactly that
-checksum. One crate label cannot stand behind two different identities. A crate that is none of these
+checksum. Every file the LLBC read from that package is then compared with the archive, which the
+engine reads without unpacking it: the file must be a plain file (not a link, at the file or at any
+directory above it) at its own place under the cargo home's unpacked copy, the archive must hold it as
+a regular file, and its bytes, and the `contents` the LLBC carries for it when it carries any, must be
+the archive entry's bytes. A changed, missing, redirected or non-archive file refuses the stage even
+though the archive's checksum is the lock's; so does an archive that cannot be read as a package (not
+gzip, a repeated or unknown entry, a wrong header checksum, trailing bytes). Files of the package that
+the LLBC does not read are not compared. Only the cargo home itself may be reached through a link: a
+cargo home whose `registry`, `src` or index directory is a link (a cache kept on another volume) makes
+every registry file read as redirected, and the stage is refused until the cargo home is a real tree. One crate label cannot stand behind two different identities. A crate that is none of these
 and none of the declared crates, including one that is only a name in the `Cargo.lock` (a path, git
 or registry package with no source file in the LLBC), is refused, not filed as external. Everything else is refused with
 the path or form named: a path outside the copy (another tree, an absolute path into the original
