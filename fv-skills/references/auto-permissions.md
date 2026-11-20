@@ -188,9 +188,10 @@ What it trusts, and so does not protect against:
 - The address that a remote of the repository holds with user information (a token) for the recorded host and
   OWNER/REPO, such as https://x-access-token:TOKEN@github.com/OWNER/REPO in origin: when there is exactly one, the
   push goes to it, after the same host, repository and rewrite checks, so the token in your own git configuration
-  keeps working. The record, the messages and the receipt never show the token, and the command removes it from what
-  git prints. As with any git push, the address and its token are visible in the process arguments of the local
-  machine while git runs.
+  keeps working. The record, the messages and the receipt never show the token, and the command removes it, and the
+  user information that a rewrite rule adds to the address, from what git prints and from its own messages, whatever
+  the length of a user name or password. As with any git push, the address and its token are visible in the process
+  arguments of the local machine while git runs.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.
@@ -336,10 +337,17 @@ and OWNER/REPO (an `origin` cloned as `https://x-access-token:token@github.com/O
 clones), the push goes to that address, after the same host, repository and rewrite checks, so that the token in
 your own git configuration keeps working. A remote with push URLs counts through them only, as in git. Two different
 addresses with user information for the destination are refused with `remote-ambiguous` before anything connects:
-keep one. The record and the receipt still hold the address without user information. The command takes the token,
-its user and password parts and the base64 of the pair out of what git prints (its error output and the result
-line), and shows an http address with user information as `https://***@host/...` everywhere else, so the token is in
-no output, log or receipt, also after a failed push: git can print a token that is the user name of an address. As
+keep one. The record and the receipt still hold the address without user information. Before git prints anything,
+the command collects every secret that the push can carry: the user information of the recorded address, of the
+address that a remote holds, and of each address that a `url.<base>.insteadOf` or `pushInsteadOf` rule makes of
+them, whether the rule is allowed or not. It takes each of them, the user and password parts and the base64 of the
+pair, whatever their length, out of what git prints (its error output and the result line) and out of the text of
+its own refusals, and shows an http address with user information as `https://***@host/...` everywhere else, so none
+of them is in any output, log or receipt, also after a failed push: git can print a token that is the user name of
+an address. A very short user name or password is replaced wherever it occurs in that text, so the text can look
+garbled, and the fields that the command fills in itself, such as the destination, stay as they are. A refusal for a
+rewrite rule names the kind of rule and the scheme, host and port that it leads to, and never the rule or its text,
+because a rule can hold a credential. As
 with any git push, the address with its token is visible in the process arguments of the local machine
 while git runs, and another user of the machine can read it there. A token that a rule or a credential helper
 supplies does not appear in the arguments. A rule that rewrites an ssh address to an https one with a token
