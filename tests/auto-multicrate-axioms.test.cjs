@@ -324,6 +324,38 @@ describe('a Lean project below the top of the repository', () => {
   });
 });
 
+describe('a project reached through a symbolic link', () => {
+  const lean = { 'Hmac.lean': leanFile('libcrux_hmac', extractionAxiom('core::a', 'core.a')) };
+  const through = (root) => {
+    const link = path.join(fixtures.temporaryDirectory('fvs-link-'), 'project');
+    fs.symlinkSync(root, link);
+    return link;
+  };
+
+  it('reads a published file recorded under the link when the project root is the real path', () => {
+    const root = scenario({ files: lean });
+    const link = through(root);
+    const state = fixtures.readState(root);
+    // The main crate's own record repeats the first unit's files, so both copies name the link.
+    const { run } = state.extraction;
+    for (const entry of [...run.units.flatMap((row) => [row.translation, ...row.publication]), ...run.publication, run.translation]) entry.projectPath = path.join(link, path.relative(root, entry.projectPath));
+    fixtures.writeState(root, state);
+    const result = write(root);
+    assert.equal(result.status, 0, result.stdout);
+    assert.deepEqual(listed(root), ['libcrux_hmac.core.a']);
+  });
+
+  it('reads a published file recorded by its real path when the project root is the link', () => {
+    const root = scenario({ files: lean });
+    const state = fixtures.readState(root);
+    const units = state.extraction.run.units;
+    const context = { units, targets: units.map((row) => row.crate), view: { units: units.map((row) => ({ crate: row.crate, dependsOn: row.imports ?? [] })) } };
+    const result = auto.allowedAxiomList(through(root), state, context, git(root, 'rev-parse', 'HEAD'));
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(result.axioms, ['libcrux_hmac.core.a']);
+  });
+});
+
 describe('what stops the list from being written', () => {
   const lean = { 'Hmac.lean': leanFile('libcrux_hmac', extractionAxiom('core::a', 'core.a')) };
 
