@@ -303,11 +303,14 @@ that record names what init would record now, whatever values the trusted variab
 A sandbox often injects a token into an http or https address, through a `url.<base>.insteadOf` rule or in the
 address of the remote (`https://user:token@host/...`). Init does not refuse that. It records the address without the
 user information, the destination is the host and OWNER/REPO, and no message, record or receipt shows the user
-information: a message shows an http address as `https://***@host/...`. A rule that only adds user information to
-the recorded address is allowed at every push, and the push uses it. Any other rule that applies to the address is
-refused, and so is a record that holds user information. The push goes to the address without the user information,
-so a token that only the remote's address held reaches it from a credential helper, or from a rule like this one, in
-git configuration or in a trusted variable.
+information: a message shows an http address as `https://***@host/...`. A rule that only adds plain user information
+to the recorded address (no `/`, `?`, `#`, `\` or `@` in it, which git and curl read as the end of the host) is
+allowed at every push, and the push uses it. Any other rule that applies to the address is refused, one that changes
+the scheme included, and so is a record that holds user information. The push goes to the address without the user
+information, so a token that only the remote's address held reaches it from a credential helper, or from a rule like
+this one, in git configuration or in a trusted variable. A rule that rewrites an ssh address to an https one with a
+token (`url.https://x:token@github.com/.insteadOf` for `git@github.com:`) is recorded as the plain https address,
+and it no longer applies to that address: add a rule for `https://github.com/` too, or use a credential helper.
 
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview lists each one by
