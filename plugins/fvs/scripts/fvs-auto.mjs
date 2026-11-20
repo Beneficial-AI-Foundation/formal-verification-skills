@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { parseBudget, executionToolIdentity, ExecutionError, runExecutionFields, withProcessCancellation, runControl, runTaskCommand, observeOwnedWork, closeOwnedWork } from './fvs-execution.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,7 @@ function usage() {
     '       node fvs-auto.mjs next-transition|execute-transition|verify-transition|verify-startup|ack-work|run-owned|record-progress|read-progress|observe-progress --input OPTIONS.json [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
+    '       node fvs-auto.mjs record-scope --release DIR [--confirm] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
@@ -1311,9 +1313,14 @@ function recordedCrateContext(state) {
 // scope, because one crate is never what is left when nothing says how many there are.
 function settledCrateContext(state) {
   const unsettled = state?.extraction?.status === 'succeeded' ? scopeUnsettled(state.extraction) : null;
-  if (unsettled !== null) refuse('scope-unsettled', unsettled, { nextStep: 'Rerun /fvs:auto-extract so that the extraction is recorded with its scope.' });
+  if (unsettled !== null) refuse('scope-unsettled', unsettled, { nextStep: `Rerun /fvs:auto-extract so that the extraction is recorded with its scope.${settleAdvice(state.extraction)}` });
   return crateContextOf(state);
 }
+
+// A record made before the extraction kept its scope has none at all, and can be settled without extracting
+// again; a scope that is there but unsettled, or contradicts the run, can only be recorded again by extracting.
+const settleAdvice = (extraction) => (extraction.scope !== undefined ? ''
+  : ' An extraction made before the scope was kept can instead be settled without extracting again: run record-scope --release DIR (the release folder the extraction used); it reads the workspace at the recorded source commit and, when that holds exactly one library crate, asks for the owner\'s confirmation to record it.');
 
 const crateContext = (root) => settledCrateContext(loadState(root));
 
@@ -1799,7 +1806,12 @@ export function allowedAxioms({ projectRoot, commit }) {
 
 function extractionErrors(extraction) {
   const errors = [];
-  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run', 'scope'])) return errors;
+  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run', 'scope', 'scopeSettled'])) return errors;
+  // How a scope came to be recorded when the extraction itself did not record it: read afterwards from the
+  // workspace at the commit the extraction was made from, with the owner's confirmation.
+  if ('scopeSettled' in extraction && !(plainObject(extraction.scopeSettled) && isText(extraction.scopeSettled.sourceCommit) && isText(extraction.scopeSettled.recordedAt))) {
+    errors.push('extraction.scopeSettled must hold the source commit the scope was read at and when it was recorded');
+  }
   if ('run' in extraction && !recordedRunValid(extraction.run)) {
     // A run that reads as a run but disagrees with its roster or stitch says where.
     const why = runValid(extraction.run) ? unitsProblem(extraction.run) : null;
@@ -2273,7 +2285,7 @@ function progress(root, state, specs = null) {
     return { phase: 'extract', warnings: [], nextAction: state.extraction ? 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.' : 'Run /fvs:auto-extract to extract the selected revision.' };
   }
   const unsettled = scopeUnsettled(state.extraction);
-  if (unsettled !== null) return { phase: 'extract', warnings: [], nextAction: `Rerun /fvs:auto-extract: ${unsettled}.` };
+  if (unsettled !== null) return { phase: 'extract', warnings: [], nextAction: `Rerun /fvs:auto-extract: ${unsettled}.${settleAdvice(state.extraction)}` };
   // A recorded spec PR merge starts the proof phase.
   const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
   const stageName = specMerge ? 'auto-execute' : 'auto-top-specs';
@@ -2819,6 +2831,105 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}`, extraction };
 }
 
+// What the extraction engine's crate scan says about the workspace at `commit`. It is read from an export of that
+// commit and never from the working tree, which has moved on since (a spec commit sits on top of the extraction).
+// The export lives in a temporary folder; no copy is prepared and no extraction tool runs. A failure is returned
+// as an answer with `ok: false`, not thrown.
+function scanSourceScope({ crateRoot, commit, release }) {
+  const failed = (message) => ({ ok: false, code: 'scope-scan-failed', message });
+  const top = gitWorkingTree(crateRoot);
+  if (top === null) return failed(`${crateRoot} is not in a git working tree, so the commit the extraction was made from cannot be read`);
+  if (resolveRevision(top, commit) !== commit) return failed(`the commit ${commit} the extraction was made from is not in the repository at ${top}`);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-scope-'));
+  try {
+    const archive = path.join(work, 'source.tar');
+    const tree = path.join(work, 'tree');
+    fs.mkdirSync(tree);
+    const git = (args) => spawnSync('git', ['--no-optional-locks', '-C', top, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const exported = git(['archive', '--format=tar', '-o', archive, commit]);
+    const unpacked = exported.status === 0 ? spawnSync('tar', ['-xf', archive, '-C', tree], { encoding: 'utf8' }) : exported;
+    if (unpacked.status !== 0) return failed(`the commit ${commit} could not be exported: ${firstLine(unpacked.stderr) || 'no reason given'}`);
+    // A manifest the export left out (git attributes can exclude files from an archive) would hide a crate from the scan.
+    const listed = git(['ls-tree', '-r', '--name-only', commit]);
+    if (listed.status !== 0) return failed(`the files of commit ${commit} could not be listed`);
+    const left = listed.stdout.split('\n').filter((file) => path.posix.basename(file) === 'Cargo.toml' && !fs.existsSync(path.join(tree, file)));
+    if (left.length > 0) return failed(`the export of commit ${commit} lacks ${left.join(', ')}, so the workspace cannot be read whole`);
+    const prefix = path.relative(top, realPathOf(crateRoot));
+    const run = spawnSync(process.execPath, [ENGINE, 'crates', '--project-root', path.join(tree, prefix), '--release', release], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    try {
+      return JSON.parse(run.stdout);
+    } catch {
+      return failed(firstLine(run.stderr) || `the extraction engine exited ${run.status} without an answer`);
+    }
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// The crate a recorded single-crate run translated, read from its published translation; null when that file is
+// gone or names none.
+function recordedCrateName(run) {
+  try {
+    const { crate } = JSON.parse(fs.readFileSync(run.translation.projectPath, 'utf8'));
+    return isText(crate) ? crate : null;
+  } catch {
+    return null;
+  }
+}
+
+// Settles the scope of an extraction that was recorded before the extraction kept one, without extracting again:
+// the workspace at the commit the extraction was made from is read (`scan`), and when it holds exactly one
+// library crate, the owner can confirm that the extraction is of that single crate. The first call only reports
+// what it found and writes nothing; the call with `confirm` scans again and records. A workspace of several
+// crates, a scope the engine cannot establish, an extraction of several crates and a record that already has a
+// scope are refused, and nothing is written in any refusal.
+export function recordScope({ projectRoot, release, confirm = false, scan = scanSourceScope }) {
+  if (!isText(release)) refuse('usage', '--release must name the release folder the extraction used');
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  const { extraction } = state;
+  const again = { nextStep: 'Run /fvs:auto-extract to extract again.' };
+  if (extraction?.status !== 'succeeded') refuse('no-extraction', 'there is no succeeded extraction record whose scope could be settled', again);
+  if ('scope' in extraction) {
+    refuse('scope-recorded', `the extraction already records its scope (${extraction.scope?.kind}); it is never changed afterwards`, scopeUnsettled(extraction) === null ? { nextStep: 'There is nothing to settle.' } : again);
+  }
+  if (['units', 'order', 'roster', 'rosterSha256'].some((key) => extraction.run?.[key] !== undefined)) {
+    refuse('aggregate-run', 'the recorded run holds crate rows, an order or a roster, which is an extraction of several crates and is never settled as one crate', again);
+  }
+  const { crateRoot, sourceCommit } = extraction.inputs;
+  const answer = scan({ crateRoot, commit: sourceCommit, release: path.resolve(root, release) });
+  const where = `the workspace at commit ${sourceCommit}`;
+  if (answer?.ok !== true) refuse('scope-scan-failed', `${where} could not be read: ${answer?.message ?? 'the scan gave no answer'}`, again);
+  const { scope } = answer;
+  if (!plainObject(scope) || !['single-crate', 'multi-crate', 'unknown'].includes(scope.kind)) {
+    refuse('scope-scan-failed', `the extraction engine reports no scope for ${where} (an older engine does not): update FVS, or extract again`, again);
+  }
+  if (scope.kind === 'unknown') refuse('scope-unsettled', `the scope of ${where} is not established (${isText(scope.reason) ? scope.reason : 'no reason given'})`, { scope, ...again });
+  const crates = Array.isArray(scope.libraryCrates) ? scope.libraryCrates.filter(isText) : [];
+  if (scope.kind === 'multi-crate') {
+    refuse('multi-crate-extraction-needed', `${where} holds several library crates (${crates.join(', ')}), so a multi-crate extraction is needed and this one cannot be settled as a single crate`,
+      { scope, nextStep: 'Run /fvs:auto-extract with an extraction spec that lists every crate.' });
+  }
+  if (scope.basis !== 'cargo' || crates.length !== 1) {
+    refuse('scope-scan-failed', `${where} does not name exactly one library crate (${crates.join(', ') || 'none'}), so no single crate is established`, { scope, ...again });
+  }
+  const [crate] = crates;
+  const recorded = recordedCrateName(extraction.run);
+  if (recorded !== null && recorded.replaceAll('-', '_') !== crate.replaceAll('-', '_')) {
+    refuse('scope-mismatch', `${where} holds the library crate ${crate}, but the recorded extraction translated ${recorded}`, { scope, ...again });
+  }
+  if (!confirm) {
+    return { code: 'scope-found', recorded: false, scope,
+      message: `${where} holds exactly one library crate, ${crate}; nothing is recorded yet`,
+      nextStep: `Tell the owner that the extraction is of the single crate ${crate}, and rerun this command with --confirm once they agree. The extraction is not run again.` };
+  }
+  state.extraction = { ...extraction, scope, scopeSettled: { sourceCommit, recordedAt: now() } };
+  const errors = stateErrors(state);
+  if (errors.length > 0) refuse('malformed-state', `the extraction record with this scope does not validate: ${errors.join('; ')}`, { errors });
+  commitState(root, state, state);
+  return { code: 'recorded', message: `the extraction is recorded as the single crate ${crate}; it was not run again`, extraction: state.extraction };
+}
+
 export function recordExternals({ projectRoot, records }) {
   const root = projectDirectory(projectRoot);
   requireState(root);
@@ -3194,6 +3305,10 @@ const STATE_COMMANDS = {
       oracle: flags.oracle,
       oracleReason: flags['oracle-reason'],
     });
+  },
+  'record-scope': (argv) => {
+    const flags = stateFlags(argv, ['release'], ['confirm']);
+    return recordScope({ projectRoot: flags['project-root'], release: flags.release, confirm: flags.confirm === true });
   },
   'record-externals': (argv) => {
     const flags = stateFlags(argv, ['input']);
