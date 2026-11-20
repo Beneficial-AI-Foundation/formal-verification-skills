@@ -157,13 +157,12 @@ What it does for this push, to harden it:
 - git runs without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CONFIG`, `GIT_NAMESPACE` and `GIT_EXEC_PATH`. It also runs without
   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT`, the `GIT_CONFIG_KEY_n` and
-  `GIT_CONFIG_VALUE_n` pairs and `GIT_CONFIG_PARAMETERS`, except those that were set when you confirmed the
-  destination at init: init shows them with their values and records a hash of each, the command keeps exactly
-  those, and it refuses to push when one of them is missing or has another value. The one exception is the first
-  look at where the repository is, which finds the record: when git cannot answer without those variables (a sandbox
-  that sets safe.directory), that read-only call is made again with the ones that are set. Every other git call is
-  made with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh,
-  credential and transport settings that are not set through those variables.
+  `GIT_CONFIG_VALUE_n` pairs and `GIT_CONFIG_PARAMETERS`, except the ones whose names you trusted when you confirmed
+  the destination at init. Init shows those names with their values. The command keeps each trusted name with
+  whatever value it has when it runs, in every git call, and drops every other name. A trusted name that is not set
+  is skipped, and a value that changed since init is not refused: the receipt marks it as changed. The configuration
+  files that git reads by default stay, and so do your ssh, credential and transport settings that are not set
+  through those variables.
 - No push option is sent.
 
 What it trusts, and so does not protect against:
@@ -172,8 +171,8 @@ What it trusts, and so does not protect against:
 - ssh and other transport wrappers (`GIT_SSH_COMMAND`, `core.sshCommand`, proxy and remote helpers): the command
   cannot tell where one of them sends the push.
 - Credential helpers.
-- The git configuration variables that you confirmed at init, the way you trust your own git configuration files:
-  whatever they set is used for the checks and for the push.
+- The git configuration variables whose names you trusted at init, the way you trust your own git configuration
+  files: whatever value they have when the command runs is used for the checks and for the push.
 - URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.
 - The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission
   rule, and so change where the command pushes or what it checks.
@@ -198,10 +197,13 @@ It exits with a plain message and a non-zero status, and pushes nothing, unless 
   branch, it is not a symbolic ref, and no tag has the same name.
 - no `url.<base>.insteadOf` or `pushInsteadOf` rule applies to the recorded address, no `[remote "<address>"]`
   section is named after it, and git reads the address as recorded.
-- every git configuration variable that init recorded is still set to the value you confirmed. If one is missing or
-  has another value, it refuses with `git-config-changed` and names the variable, never its value. It does not replace
-  the record: to accept the change, delete the record file and run the destination step of `/fvs:auto-init` again.
-  A variable that was not recorded is removed, and the command goes on without it.
+- git finds the repository with the git variables that you trusted at init and no others. The command looks for the
+  record from the work directory first, then asks git for the shared git directory and compares the two. A variable
+  that is set and not trusted never reaches git. In a sandbox that needs one of them (git refuses a repository that
+  another user owns unless `safe.directory` is set, often through `GIT_CONFIG_COUNT`), the command refuses with
+  `not-a-repository` and names the variables that it left out, never their values. To trust them, run the
+  destination step of `/fvs:auto-init` again: it replaces the record after your yes. A trusted name that is not set,
+  or that has another value than at init, is not a refusal.
 
 A worker that gets a refusal stops and reports its `code` and `message`. It does not fall back to `git push`.
 
@@ -216,13 +218,13 @@ where the push went or what it sent: `remote.<name>.push`, `remote.<name>.pushur
 empties the list of push options from every git configuration: push options go to the receiving side, which can act on
 them, and this command sends none. `--no-verify` skips the pre-push hook, including one that is set in git
 configuration with `hook.<name>.event`, which `core.hooksPath` does not turn off. `core.hooksPath=/dev/null` makes git
-find no hook in any hooks folder. Every git call that the command makes, and every git call that the permissions
-helper makes itself, also runs without the variables listed under "What it does for this push", so the checks and the
-push see the same configuration. The exception is the git configuration variables that you confirmed at init, which
-the command keeps for its own calls. The permissions helper runs its destination checks with the variables that are
-set in its session, because it asks you to confirm them. Its look at the git status of a settings file runs without
-any. In the tests, a push option set in a confirmed variable was not sent, because git applies the command's own
-`-c push.pushOption=` after it.
+find no hook in any hooks folder. Every git call that the command makes (the look for the repository, the checks,
+the address checks and the push) runs with the same environment, so the checks see what the push sees. It is without
+the variables listed under "What it does for this push", except the git configuration variables whose names you
+trusted at init, which every call keeps with the value they have when the command runs. The permissions helper runs
+its destination checks with the variables that are set in its session, because it asks you to confirm them. Its look
+at the git status of a settings file runs without any. In the tests, a push option set in a trusted variable was not
+sent, because git applies the command's own `-c push.pushOption=` after it.
 
 The result is appended to `.formalising/auto-fv/pushes.jsonl` in the recorded project root: `created`,
 `fast-forward`, `up-to-date`, `failed` (git says it did not update the branch) or `unknown`. The record names only
@@ -231,6 +233,10 @@ up-to-date branch have none in git's summary, so `newRemoteId` is null for them.
 that the command read just before the push. It is not the id of what was sent, because the branch can move between
 that read and the push. To learn the head on the destination, run `git fetch` and read `origin/<name>`, and treat
 that as a later observation: another push may have come in since. The command leaves no `origin/<name>` ref and sets no upstream: run `git fetch` to see the branch.
+
+The receipt, in the output and in that file, also has `gitVariables`. For each trusted name it says `same` (the
+value is the one that you saw at init), `changed` (another value, which the command used) or `not-set`, and it lists
+the names that were set and not trusted, which the push dropped. It holds no value and no hash.
 
 When git ends without a result for the branch (a lost connection, a timeout, a signal), the destination may have
 taken the update. The command then reports `push-outcome-unknown` and does not say that nothing changed. Read the
@@ -281,20 +287,30 @@ checkout), so every worktree of the repository finds it and no commit contains i
 }
 ```
 
-Init records the address git would push to after its own rewriting. It never replaces a record that differs: it
-stops with `destination-conflict` and shows both. To record another destination, check the file, delete it yourself
-and run init again. The permission preview for a push rule shows this record, and the push rule is written only
-while the record still matches what init would record now.
+Init records the address git would push to after its own rewriting. It replaces a record only to change the git
+variables that you trust (below), and only when the destination is the same. A record for another destination, a
+record that is not valid and a file that is not JSON stop it with `destination-conflict`, which shows both. To
+record another destination, check the file, delete it yourself and run init again. The permission preview for a push
+rule shows the record that is on disk, and the push rule is written only while that record names what init would
+record now, whatever values the trusted variables have.
 
 If git configuration variables are set when you confirm the destination (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
-`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview prints each one with its
-value, and the record gains `gitConfigEnvironmentSha256`: a hash of each value, so the file never holds a value that
-may be a credential. The values are printed only in that preview. Do not confirm a variable that holds a token: unset
-it and use a credential helper. Run the destination step where the workers run, so the recorded variables are the ones
-they have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does not answer
-in a repository that another user owns without it. A variable that changes from one session to the next, such as a
-`GIT_CONFIG_GLOBAL` that names a new path each time, makes the push command refuse each time with `git-config-changed`.
-Give the sandbox a fixed value, or put that configuration in a file under the home folder, which git still reads.
+`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT` with its pairs, `GIT_CONFIG_PARAMETERS`), the preview prints each one with
+its value, and your yes trusts these names. The record gains `trustedGitVariables`: each trusted name with a hash of
+its value at that moment, so the file never holds a value that may be a credential. The values are printed only in
+that preview. The push command keeps each trusted name with whatever value it has when it runs and drops every other
+name. A value that changes later, such as a token that a sandbox sets for each session, is not refused: the receipt
+marks it `changed`, and the hash is for that information only. A trusted name that is not set is skipped. You trust
+these names the way you trust `~/.gitconfig`: whatever they hold is used. Do not trust a variable that carries a
+token when a credential helper can do the job. Run the destination step where the workers run, so the names are the
+ones they have. A sandbox that gives git `safe.directory` through `GIT_CONFIG_COUNT` needs this, because git does
+not answer in a repository that another user owns without it. Trust the whole group (`GIT_CONFIG_COUNT` with its
+`GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n` pairs): a count whose pairs were dropped makes git fail in every call.
+
+To change which names you trust, run the destination step again where the workers run. When the record is the same
+except for its trusted names, the preview shows the old record, the new record and the names that are added and
+removed, with its own digest. After your yes the record is rewritten (`replaced`) and the old one is not kept. The
+digest covers the old record, so a record that changed after the preview needs a new yes.
 
 ### Push allow rules already in your settings
 
