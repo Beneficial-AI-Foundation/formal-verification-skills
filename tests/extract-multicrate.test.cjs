@@ -542,20 +542,45 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     const ws = workspace();
     withExtras(ws);
     fs.symlinkSync('lib.rs', path.join(ws.project, 'lib', 'src', 'alias.rs'));
+    fs.writeFileSync(path.join(ws.project, 'lib', 'build.rs'), 'fn main() {}\n');
     for (const name of ['one.sh', 'two.sh']) {
       fs.mkdirSync(path.join(ws.project, 'lib', 'extracts'), { recursive: true });
       fs.symlinkSync('../src/lib.rs', path.join(ws.project, 'lib', 'extracts', name));
     }
+    fs.mkdirSync(path.join(ws.project, 'app', 'gen'), { recursive: true });
+    fs.symlinkSync('../src/lib.rs', path.join(ws.project, 'app', 'gen', 'out.h'));
     const before = fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort();
     const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', toySpec().release]);
     assert.equal(listed.status, 0, listed.stdout);
     assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
     assert.deepEqual(listed.result.inputs, ['Cargo.lock', 'Cargo.toml', 'app', 'lib', 'script', 'tool']);
-    assert.deepEqual(listed.result.links, ['lib/src/alias.rs'], 'a link the build can read, which a copy refuses, is named');
-    assert.deepEqual(listed.result.ignoredLinks, ['lib/extracts/one.sh', 'lib/extracts/two.sh'], 'a link it cannot read is only reported');
-    assert.equal(listed.result.ignoredLinkCount, 2);
+    assert.deepEqual(listed.result.links, ['lib/src/alias.rs'], 'a link the build certainly reads, which a copy refuses whatever the owner says, is named');
+    assert.equal(listed.result.linkCount, 1);
+    assert.deepEqual(listed.result.unreadLinks, []);
+    // Every other link is proposed, never left out silently: the owner decides, with the target and a reason to adopt.
+    const proposed = listed.result.proposedUnreadLinks;
+    assert.deepEqual(proposed.map((link) => [link.path, link.target, link.buildScript]), [
+      ['app/gen/out.h', '../src/lib.rs', false],
+      ['lib/extracts/one.sh', '../src/lib.rs', true],
+      ['lib/extracts/two.sh', '../src/lib.rs', true],
+    ]);
+    assert.match(proposed[0].reason, /^symbolic link to \.\.\/src\/lib\.rs, which is not a manifest, lock, build script, toolchain or cargo configuration file, Rust source file or file under src; the owner confirms that the build does not read it$/);
+    assert.match(proposed[1].reason, /the owner confirms that the build does not read it \(its crate has a build script, which could read it\)$/);
+    assert.equal(listed.result.ignoredLinks, undefined);
     assert.equal(listed.result.compared, undefined, 'there is no copy to compare with');
     assert.deepEqual(fs.readdirSync(path.join(ws.project, 'lib', 'src')).sort(), before, 'the checkout is not touched');
+
+    // Once the owner has said yes, the list is in the configuration: those links are no longer proposed,
+    // and an entry that names no link is reported as stale.
+    const configFile = path.join(ws.project, '.formalising', 'fvs-config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    config.extraction.unreadLinks = [{ path: 'lib/extracts/one.sh', reason: 'C header output, not a Rust input' }, { path: 'lib/extracts/gone.sh', reason: 'removed upstream' }];
+    fs.writeFileSync(configFile, JSON.stringify(config));
+    const again = engine(ws, ['crates', '--project-root', ws.project, '--release', toySpec().release]);
+    assert.equal(again.status, 0, again.stdout);
+    assert.deepEqual(again.result.unreadLinks, [{ path: 'lib/extracts/one.sh', target: '../src/lib.rs', reason: 'C header output, not a Rust input' }]);
+    assert.deepEqual(again.result.proposedUnreadLinks.map((link) => link.path), ['app/gen/out.h', 'lib/extracts/two.sh']);
+    assert.deepEqual(again.result.staleUnreadLinks, ['lib/extracts/gone.sh']);
   });
 
   it('says what the patched copy lost compared with the checkout', () => {

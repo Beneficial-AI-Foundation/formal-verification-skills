@@ -67,10 +67,12 @@ function usage() {
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
     'once), to a disposable copy of the Rust extraction input set (extraction.inputs',
     'in .formalising/fvs-config.json, default Cargo.toml, Cargo.lock, build.rs, src).',
-    'A symbolic link the build can read (a manifest, lock, build script, toolchain or cargo',
+    'A symbolic link the build certainly reads (a manifest, lock, build script, toolchain or cargo',
     'configuration file, a Rust source file, anything under src, or an input itself) is refused. Any',
-    'other link under the inputs is not copied: check lists it (links) and the manifest records it',
-    '(source.links) with its target.',
+    'other link under the inputs is refused too, unless the owner lists it in extraction.unreadLinks',
+    '([{ path, reason }]): a listed link is not copied, and check lists it (links) and the manifest',
+    'records it (source.links) with its target and reason. A listed path that is no such link is',
+    'refused. crates --project-root proposes the list, with each link\'s target.',
     'The original checkout is never written. check rehearses the list in a temporary',
     'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
     'outside the project); verify-restore compares the touched original sources with',
@@ -304,35 +306,66 @@ function resolveMode(projectRoot, config, files, patches) {
   return mode;
 }
 
-// A symbolic link the Rust build can read: a manifest, lock, build script, toolchain or cargo
-// configuration file, a Rust source file, anything named or placed under src or .cargo, or an
-// input the owner declared. Other links (the C headers a crate also generates, say) are not
-// copied and the build does not read them: a build that does need one fails on the missing file,
-// so none of them can change an extraction unseen.
+// A symbolic link the Rust build certainly reads, whatever anyone says: a manifest, lock, build
+// script, toolchain or cargo configuration file, a Rust source file, anything named or placed
+// under src or .cargo, or an input itself. Such a link is always refused; the owner replaces it by
+// its content or leaves its crate out.
+//
+// Every other link is refused too, unless the owner lists it in extraction.unreadLinks with the
+// reason it is not a build input. A copy holds regular files only, so a link is left out of it, and
+// a build script, include_str! or include_bytes! may read a file with any name and fall back
+// silently when it is missing: the engine cannot tell from a name that no build reads the link,
+// so leaving one out is the owner's recorded decision and never a guess.
 const RUST_LINK_NAMES = new Set(['Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain', 'rust-toolchain.toml', 'src', '.cargo']);
 function isRustInputLink(relative, declared) {
   const parts = relative.split('/');
   return declared || relative.endsWith('.rs') || RUST_LINK_NAMES.has(parts[parts.length - 1]) || parts.slice(0, -1).some((part) => part === 'src' || part === '.cargo');
 }
 
+// extraction.unreadLinks: [{ path, reason }], the links under extraction.inputs the owner decided
+// the build does not read, by project-relative path, each with the reason. A path that holds no
+// such link is refused where the inputs are walked.
+function unreadLinks(config) {
+  const listed = config.extraction?.unreadLinks;
+  const found = new Map();
+  if (listed === undefined) return found;
+  if (!Array.isArray(listed)) refuse('invalid-input', 'extraction.unreadLinks must be an array of { path, reason }');
+  listed.forEach((entry, index) => {
+    const where = `extraction.unreadLinks[${index}]`;
+    if (!isObject(entry) || Object.keys(entry).some((key) => !['path', 'reason'].includes(key))) refuse('invalid-input', `${where} must be an object with only path and reason`);
+    if (typeof entry.path !== 'string' || path.isAbsolute(entry.path) || entry.path.split('/').some((part) => ['', '.', '..'].includes(part) || FORBIDDEN_SEGMENTS.has(part))) {
+      refuse('invalid-input', `${where}.path ${JSON.stringify(entry.path)} must be a plain project-relative path outside .git, .formalising and .planning`);
+    }
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say why the build does not read ${entry.path}`);
+    if (found.has(entry.path)) refuse('invalid-input', `extraction.unreadLinks lists ${entry.path} more than once`);
+    found.set(entry.path, entry.reason);
+  });
+  return found;
+}
+
 // Every regular file in the input set with its content hash and mode. A link is never
 // followed or copied: a followed link would extract content from outside the input set, and a
 // copied one would write through to the original checkout or a shared planning directory. A link
-// the build can read is rejected; with SKIPPED (an array) any other link is left out of the
-// copy and listed there with its target, so a checkout that carries generated-output links can
-// still be extracted. A copy is walked without SKIPPED: it must hold no link at all.
-function walkInputs(root, inputs, skipped = null) {
+// the build certainly reads is refused; with SKIPPED (an array) a link the owner listed in UNREAD
+// (path to reason) is left out of the copy and recorded there with its target and reason, and any
+// other link is refused. An entry of UNREAD that is not a link under the inputs is refused. A copy
+// is walked without SKIPPED: it must hold no link at all.
+function walkInputs(root, inputs, skipped = null, unread = new Map()) {
   const files = {};
   function visit(relative, declared = false) {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
     if (!stat) return; // an input a patch deleted from the copy
     if (stat.isSymbolicLink()) {
+      const target = fs.readlinkSync(absolute);
       if (skipped !== null && !isRustInputLink(relative, declared)) {
-        skipped.push({ path: relative, target: fs.readlinkSync(absolute) });
-        return;
+        if (unread.has(relative)) {
+          skipped.push({ path: relative, target, reason: unread.get(relative) });
+          return;
+        }
+        refuse('invalid-input', `${relative} is a symbolic link (to ${target}); a copy holds regular files only and the build may read a link of any name, so replace it with the intended content, leave its crate out of extraction.inputs, or, only when the build does not read it, list it in extraction.unreadLinks with the reason`, { kind: 'symlink', path: relative, target, listable: true });
       }
-      refuse('invalid-input', `${relative} is a symbolic link${skipped !== null ? ' the build can read (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file, anything under src, or a declared input)' : ''}; the extraction input set takes only regular files, so replace it with the intended content or leave it out of extraction.inputs`, { kind: 'symlink', path: relative });
+      refuse('invalid-input', `${relative} is a symbolic link${skipped !== null ? ' the build certainly reads (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file, anything under src, or an input itself), so it cannot be listed in extraction.unreadLinks' : ''}; the extraction input set takes only regular files, so replace it with the intended content or leave it out of extraction.inputs`, { kind: 'symlink', path: relative, target });
     }
     if (stat.isDirectory()) {
       for (const name of fs.readdirSync(absolute).sort()) visit(`${relative}/${name}`);
@@ -343,6 +376,10 @@ function walkInputs(root, inputs, skipped = null) {
     }
   }
   for (const input of inputs) visit(input, true);
+  if (skipped !== null) {
+    const missing = [...unread.keys()].filter((listed) => !skipped.some((link) => link.path === listed));
+    if (missing.length > 0) refuse('invalid-input', `extraction.unreadLinks lists ${missing.join(', ')}, which ${missing.length === 1 ? 'is' : 'are'} not a symbolic link under extraction.inputs (missing, a regular file or directory, outside the inputs, or a link the build certainly reads); remove the entry`, { kind: 'stale-unread-link', paths: missing });
+  }
   return files;
 }
 
@@ -382,7 +419,7 @@ function load(projectRootFlag) {
   const inputs = inputPaths(projectRoot, config);
   const patches = readPatches(projectRoot);
   const links = [];
-  const files = walkInputs(projectRoot, inputs, links);
+  const files = walkInputs(projectRoot, inputs, links, unreadLinks(config));
   const mode = resolveMode(projectRoot, config, files, patches);
   refuseOutsideInputs(patches, inputs);
   const touched = [...new Set(patches.flatMap((patch) => patch.touches))].sort();
@@ -513,7 +550,7 @@ function check(flags) {
     // The commit the inputs start from and the input paths that differ from it (modified,
     // staged, deleted or untracked); both null outside a git checkout.
     source: { commit: context.commit, dirty: context.dirty },
-    // Symbolic links under the inputs that are not Rust inputs: not copied, and not read by the build.
+    // Symbolic links under the inputs that the owner listed as unread by the build (extraction.unreadLinks): not copied.
     links: context.links,
     patches: records,
   };
@@ -768,13 +805,14 @@ function migratedPatch(entry, hunk, index) {
 function migrate(flags) {
   if (!fs.existsSync(flags['project-root'])) refuse('usage', `--project-root ${flags['project-root']} does not exist`);
   const projectRoot = fs.realpathSync(flags['project-root']);
-  const inputs = inputPaths(projectRoot, readConfig(projectRoot));
+  const config = readConfig(projectRoot);
+  const inputs = inputPaths(projectRoot, config);
   const directory = path.join(projectRoot, PATCH_DIR);
   refuseLinkedDirectory(projectRoot, PATCH_DIR);
   if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
     refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
   }
-  const files = walkInputs(projectRoot, inputs, []);
+  const files = walkInputs(projectRoot, inputs, [], unreadLinks(config));
   const diffs = legacyLedger(projectRoot, files).active.filter((file) => path.posix.basename(file) === LEDGER_DIFF);
   if (diffs.length !== 1) {
     refuse('invalid-input', diffs.length === 0
@@ -1504,22 +1542,36 @@ function suggestedInputs(tree, metadata, described) {
   return covered.sort();
 }
 
-// Symbolic links under the proposed inputs. A copy holds regular files only, so a link the build
-// can read (blocking) is refused and the owner leaves its crate out or replaces the link by
-// content; any other link is not copied and not read (ignored), and is only reported. The
-// first few of each, with the full count of the ignored ones.
+// Symbolic links under the proposed inputs, in three classes. A copy holds regular files only. A
+// link the build certainly reads (blocking) is refused whatever the owner says: the owner replaces
+// it by its content or leaves its crate out. Any other link is refused unless the owner lists it in
+// extraction.unreadLinks (listed, with the owner's reason); the others are proposed, each with its
+// target and a reason the owner can adopt, and the owner decides. A proposal says whether the crate
+// that holds the link has a build script, which could read it. The first few blocking links are
+// reported; the owner decides on every proposed one, so none is cut.
 const LINK_REPORT_LIMIT = 10;
-function linksUnder(tree, inputs) {
+function linksUnder(tree, inputs, unread = new Map(), rows = []) {
   const blocking = [];
-  const ignored = [];
+  const listed = [];
+  const proposed = [];
+  const owner = (relative) => rows.filter((row) => row.dir === '.' || relative.startsWith(`${row.dir}/`)).sort((a, b) => b.dir.length - a.dir.length)[0];
   const visit = (relative, declared = false) => {
     const stat = fs.lstatSync(path.join(tree, relative), { throwIfNoEntry: false });
     if (!stat) return;
-    if (stat.isSymbolicLink()) (isRustInputLink(relative, declared) ? blocking : ignored).push(relative);
-    else if (stat.isDirectory()) for (const name of fs.readdirSync(path.join(tree, relative)).sort()) visit(`${relative}/${name}`);
+    if (stat.isSymbolicLink()) {
+      const target = fs.readlinkSync(path.join(tree, relative));
+      if (isRustInputLink(relative, declared)) blocking.push(relative);
+      else if (unread.has(relative)) listed.push({ path: relative, target, reason: unread.get(relative) });
+      else {
+        const holder = owner(relative);
+        const buildScript = holder ? holder.item.targets.some((item) => item.kind.includes('custom-build')) : null;
+        proposed.push({ path: relative, target, buildScript, reason: `symbolic link to ${target}, which is not a manifest, lock, build script, toolchain or cargo configuration file, Rust source file or file under src; the owner confirms that the build does not read it${buildScript === true ? ' (its crate has a build script, which could read it)' : ''}` });
+      }
+    } else if (stat.isDirectory()) for (const name of fs.readdirSync(path.join(tree, relative)).sort()) visit(`${relative}/${name}`);
   };
   inputs.forEach((input) => visit(input, true));
-  return { blocking: blocking.slice(0, LINK_REPORT_LIMIT), ignored: ignored.slice(0, LINK_REPORT_LIMIT), ignoredCount: ignored.length };
+  const stale = [...unread.keys()].filter((entry) => !listed.some((link) => link.path === entry)).sort();
+  return { blocking: blocking.slice(0, LINK_REPORT_LIMIT), blockingCount: blocking.length, listed, proposed, stale };
 }
 
 function listCrates(flags) {
@@ -1544,10 +1596,12 @@ function listCrates(flags) {
   };
   if (!prepared) {
     const inputs = suggestedInputs(tree, metadata, { ...described, unlisted: view.unlisted });
-    // A copy holds regular files only: a link the build can read is named in links and has to be
-    // replaced or its crate left out; the other links are reported in ignoredLinks and left out of the copy.
-    const links = linksUnder(tree, inputs);
-    return { ...result, inputs, links: links.blocking, ignoredLinks: links.ignored, ignoredLinkCount: links.ignoredCount };
+    // A copy holds regular files only. A link the build certainly reads is named in links and has to
+    // be replaced or its crate left out. Every other link is refused unless the owner lists it in
+    // extraction.unreadLinks (unreadLinks, with the owner's reason); the rest are proposed with a
+    // reason (proposedUnreadLinks), and the owner decides on the whole list at once.
+    const links = linksUnder(tree, inputs, unreadLinks(readConfig(projectRoot)), view.rows);
+    return { ...result, inputs, links: links.blocking, linkCount: links.blockingCount, unreadLinks: links.listed, proposedUnreadLinks: links.proposed, staleUnreadLinks: links.stale };
   }
   // The checkout's own view, for what the patches changed. A checkout cargo cannot read
   // leaves the comparison out, with the reason.

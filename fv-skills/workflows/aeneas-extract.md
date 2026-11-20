@@ -352,12 +352,19 @@ members, followed to any depth (package, crate name, directory, `member`, the in
 depends on, an order with providers first, so a member comes after the non-member crates it needs),
 proposes the `extraction.inputs` a copy needs (workspace manifest and lock, every member and in-repo
 path dependency) and names the symbolic links under them. A copy holds regular
-files only: a link the build can read (a manifest, lock, build script, toolchain or cargo
-configuration file, a Rust source file, anything under `src`, or an input itself) is listed in
-`links` and refused, and the owner replaces it by its content or leaves its crate out. Any other link
-(generated C headers, say) is not copied and not read by the build, so it never stops a run: it is
-listed in `ignoredLinks` (with `ignoredLinkCount`), and `check` and the manifest (`source.links`)
-record each with its target. A build that did need one fails on the missing file. It also names
+files only, and a build script, `include_str!` or `include_bytes!` may read a link of any name and
+fall back silently when it is missing, so no link is left out on a guess. A link the build certainly
+reads (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file,
+anything under `src`, or an input itself) is listed in `links` and refused whatever the owner says:
+the owner replaces it by its content or leaves its crate out. Every other link (generated C headers,
+say) is refused too, unless the owner lists it in `extraction.unreadLinks` (`[{ path, reason }]`) as a
+link the build does not read. `crates` proposes that list: `proposedUnreadLinks` holds each such link
+with its `target`, a `reason` to adopt, and `buildScript` (true when the crate that holds it has a
+build script, which could read it). Show the whole proposal to the user and write it into
+`extraction.unreadLinks` only after their yes; never edit the list on your own. `unreadLinks` holds
+the links already listed (with their reasons) and `staleUnreadLinks` the entries that name no link
+under the inputs, which `check` and `prepare` refuse. A listed link is not copied; `check` and the
+manifest (`source.links`) record it with its target and reason. It also names
 a member whose real directory lies outside the checkout (`outside`). On a prepared copy it also names the path
 dependencies the patches removed (`pathDependenciesRemoved`) and the packages the copy lacks
 (`packagesNotInCopy`), so a patch that hides an in-repo crate is never silent; the attempt enforces
