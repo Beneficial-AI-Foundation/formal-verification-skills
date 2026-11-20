@@ -104,6 +104,27 @@ describe('the proof phase over several crates', () => {
     assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]]);
   });
 
+  it('is not done, and accepts no crate, when the saved run lost the rows of its crates', () => {
+    // The roster, its hash and the order are still there, so the run is an aggregate that lost its crate
+    // rows, not a single crate: the state refuses to read, and the owner is told that extracting again
+    // replaces the record.
+    const { root, head } = proofPhase();
+    receipt(root, head, bothBuilt());
+    assert.equal(view(root).phase, 'done');
+    const state = fixtures.readState(root);
+    delete state.extraction.run.units;
+    fixtures.writeState(root, state);
+    for (const args of [[], ['--brief']]) {
+      const result = cli('read-state', '--project-root', root, ...args);
+      assert.equal(result.status, 3, result.stdout);
+      assert.equal(result.json.code, 'malformed-state');
+      assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt \(the run carries its roster, rosterSha256, order but lists none of its crates\)/);
+      assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/);
+      assert.equal('phase' in result.json, false);
+      assert.equal('crates' in result.json, false);
+    }
+  });
+
   describe('a native-decision axiom the merged spec already rested on', () => {
     // The build check keeps such a statement and flags it, and refuses a native axiom that is new since
     // the merged spec; what it flags is reported to the owner, whose review decides.
@@ -470,7 +491,7 @@ describe('a project with one crate', () => {
     const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
     if (!keepUnits) {
       const state = fixtures.readState(root);
-      delete state.extraction.run.units;
+      fixtures.asSingleCrate(state.extraction.run);
       fixtures.writeState(root, state);
     }
     return { root, head };

@@ -180,10 +180,15 @@ function extracted(units, { run = {}, below = false, dropped = [] } = {}) {
   return root;
 }
 
+// The recorded run of one crate as the patch engine reports it: none of the fields of an aggregate
+// (its crate rows, their order, the roster and its hash). `run` is the run of the state, changed in place.
+const AGGREGATE_FIELDS = ['units', 'order', 'roster', 'rosterSha256'];
+const asSingleCrate = (run) => { for (const key of AGGREGATE_FIELDS) delete run[key]; return run; };
+
 // libcrux_hmac calls into libcrux_sha2, which is the provider.
 const hmacAndSha2 = (root) => [
   unit(root, 'libcrux_hmac', [fn('libcrux_hmac::hmac::hmac', 'src/hmac.rs', 10)], { imports: ['libcrux_sha2'] }),
   unit(root, 'libcrux_sha2', [fn('libcrux_sha2::hacl::hash_256', 'src/hacl.rs', 5)]),
 ];
 
-module.exports = { canonical, agreementFor, recordAgreement, ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, stitchOf, unit, extracted, hmacAndSha2 };
+module.exports = { canonical, agreementFor, recordAgreement, ROOT, ZEROS, use, cleanup, temporaryDirectory, sha256, git, project, init, cli, stateFile, readState, writeState, fn, stitchOf, unit, extracted, hmacAndSha2, AGGREGATE_FIELDS, asSingleCrate };

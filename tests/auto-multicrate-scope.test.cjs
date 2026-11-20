@@ -104,6 +104,38 @@ describe('record-extraction when the scope is several crates', () => {
   });
 });
 
+describe('an extraction record that no longer reads', () => {
+  it('is replaced by extracting again, and nothing else in the state is touched', () => {
+    const root = project();
+    init(root);
+    const out = copyOf(root, { attempt: true });
+    assert.equal(record(root, out).code, 'recorded');
+    const before = readState(root);
+    // A run that kept its roster but lost the rows of its crates: the state does not read.
+    const broken = { ...before, extraction: { ...before.extraction, run: { ...before.extraction.run, order: ['demo'], roster: { main: 'demo' }, rosterSha256: '1'.repeat(64) } } };
+    fixtures.writeState(root, broken);
+    const unread = fixtures.cli('read-state', '--project-root', root);
+    assert.equal(unread.json.code, 'malformed-state');
+    assert.match(unread.json.nextStep, /rerun \/fvs:auto-extract/);
+    assert.equal(record(root, out).code, 'recorded');
+    const after = readState(root);
+    assert.equal(after.extraction.status, 'succeeded');
+    assert.deepEqual({ ...after, extraction: null }, { ...before, extraction: null });
+  });
+
+  it('is not replaced when the state has another fault', () => {
+    const root = project();
+    init(root);
+    const out = copyOf(root, { attempt: true });
+    assert.equal(record(root, out).code, 'recorded');
+    const state = readState(root);
+    state.extraction.run.units = [];
+    state.choices = null;
+    fixtures.writeState(root, state);
+    assert.throws(() => record(root, out), (error) => error.code === 'malformed-state' && !/rerun \/fvs:auto-extract/.test(error.details.nextStep));
+  });
+});
+
 describe('the crates in scope', () => {
   it('are those the agreement names, targets and non-targets, and the in-repo library crates of the workspace', () => {
     assert.deepEqual(auto.declaredCrates({ targets: { crates: ['b', 'a'], nonTargets: [{ crate: 'c', decision: 'x' }] } }), ['a', 'b', 'c']);

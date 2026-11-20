@@ -98,7 +98,7 @@ describe('record-spec over several crates', () => {
       const root = extracted((directory) => [unit(directory, 'libcrux_hmac', [])]);
       if (!keepUnits) {
         const state = fixtures.readState(root);
-        delete state.extraction.run.units;
+        fixtures.asSingleCrate(state.extraction.run);
         fixtures.writeState(root, state);
       }
       fs.mkdirSync(path.join(root, 'formal/specs/Specs'), { recursive: true });

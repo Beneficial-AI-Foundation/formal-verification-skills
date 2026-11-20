@@ -1160,7 +1160,12 @@ function rosterProblem(run) {
 // Returns the first problem in words, or null.
 export function unitsProblem(run) {
   const { units } = run;
-  if (units === undefined) return null;
+  if (units === undefined) {
+    // The fields of an aggregate come together: a single crate's own run has none of them, so a run that
+    // still carries the roster, its hash or the order has lost its crate rows and is not a single crate.
+    const left = ['roster', 'rosterSha256', 'order'].filter((key) => key in run);
+    return left.length === 0 ? null : `the run carries its ${left.join(', ')} but lists none of its crates`;
+  }
   if (!Array.isArray(units) || units.length === 0) return 'the run lists no crate';
   if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return 'a crate row is not a valid run of this copy';
   const roster = rosterProblem(run);
@@ -1826,7 +1831,7 @@ const externalsPath = (root) => path.join(root, STATE_DIR, 'externals.json');
 
 // Null when the file is absent; a refusal naming the file and the next step
 // when it is unreadable or does not validate. It is never repaired here.
-function loadRecord(file, code, validate, rerun) {
+function loadRecord(file, code, validate, rerun, recovery = () => null) {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -1843,16 +1848,22 @@ function loadRecord(file, code, validate, rerun) {
     refuse(code, `${file} is not valid JSON: ${error.message}`, { file, nextStep });
   }
   const errors = validate(value);
-  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep });
+  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: recovery(errors) ?? nextStep });
   RECORD_TEXT.set(value, text);
   return value;
 }
+
+// A state whose only fault is its extraction record can be put right by extracting again, which replaces
+// that record and nothing else: the owner is not left with a state that only a hand edit can open.
+const extractionOnly = (errors) => errors.every((text) => text.startsWith('extraction'));
+const extractionRecovery = (errors) => (extractionOnly(errors)
+  ? 'The extraction record is the only fault: rerun /fvs:auto-extract, which records the extraction again in its place; nothing else in the state is touched.' : null);
 
 // The exact text each loaded record was parsed from, so a writer can tell
 // whether the file changed after it read it.
 const RECORD_TEXT = new WeakMap();
 
-const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
+const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init', extractionRecovery);
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
 const specsPath = (root) => path.join(root, STATE_DIR, 'specs.json');
 const loadSpecs = (root) => loadRecord(specsPath(root), 'malformed-specs', specsFileErrors, 'the spec-phase command');
@@ -1991,6 +2002,22 @@ function requireState(root) {
   const state = loadState(root);
   if (!state) refuse('no-state', `no auto-track state in ${statePath(root)}`, { nextStep: 'Run /fvs:auto-init first.' });
   return state;
+}
+
+// The state for recording an extraction: the same, except that an extraction record which no longer
+// reads is dropped from the copy in memory, because this write replaces it. Any other fault still refuses.
+function requireStateToExtract(root) {
+  try {
+    return requireState(root);
+  } catch (error) {
+    const errors = error instanceof Refusal && error.code === 'malformed-state' ? error.details?.errors : null;
+    if (!Array.isArray(errors) || !extractionOnly(errors)) throw error;
+    const text = fs.readFileSync(statePath(root), 'utf8');
+    const state = { ...JSON.parse(text), extraction: null };
+    if (stateErrors(state).length > 0) throw error;
+    RECORD_TEXT.set(state, text);
+    return state;
+  }
 }
 
 // Written to a sibling temporary file, flushed, then renamed over the target,
@@ -2598,7 +2625,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // A blank reason is the same as none, so the record satisfies the reader's optional-text rule.
   const reason = isText(oracleReason) ? oracleReason : undefined;
   const root = projectDirectory(projectRoot);
-  const state = requireState(root);
+  const state = requireStateToExtract(root);
   // A relative copy path is read from the project root, not the shell's working directory.
   const copy = path.resolve(root, out);
   const checks = {

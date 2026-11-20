@@ -105,11 +105,9 @@ describe('a succeeded extraction over several crates', () => {
 
   it('a single-crate extraction, with or without a one-row units list, has no crate view', () => {
     const plain = extracted((directory) => [unit(directory, 'libcrux_hmac', [])]);
-    const state = readState(plain);
-    const oneRow = state.extraction.run.units;
-    for (const units of [null, oneRow]) {
-      if (units === null) delete state.extraction.run.units;
-      else state.extraction.run.units = units;
+    for (const oneRow of [true, false]) {
+      const state = readState(plain);
+      if (!oneRow) fixtures.asSingleCrate(state.extraction.run);
       writeState(plain, state);
       const result = cli('read-state', '--project-root', plain);
       assert.equal(result.status, 0, result.stdout);
@@ -141,6 +139,9 @@ describe('a succeeded extraction over several crates', () => {
       'a stitch with no digest of the provider\'s publication': (state) => { delete state.extraction.run.units[0].stitch[0].providerStageSha256; },
       'a stitch made from another publication of the provider': (state) => { state.extraction.run.units[0].stitch[0].providerStageSha256 = '1'.repeat(64); },
       'a stitch that imports no module': (state) => { state.extraction.run.units[0].stitch[0].modules = []; },
+      'a run that kept its roster, its hash and its order but lost its crate rows': (state) => { delete state.extraction.run.units; },
+      'a run that kept only its roster': (state) => { delete state.extraction.run.units; delete state.extraction.run.order; delete state.extraction.run.rosterSha256; },
+      'a run that kept only its order': (state) => { delete state.extraction.run.units; delete state.extraction.run.roster; delete state.extraction.run.rosterSha256; },
     };
     for (const [label, change] of Object.entries(cases)) {
       const root = extracted(hmacAndSha2);
@@ -205,6 +206,13 @@ describe('what binds the crates of a run to its roster and stitch', () => {
     const result = cli('read-state', '--project-root', root);
     assert.equal(result.status, 3, result.stdout);
     assert.match(result.json.message, /extraction\.run must be the re-validated extraction attempt \(the stitch of libcrux_hmac was made from another publication of libcrux_sha2 than the run holds\)/);
+  });
+
+  it('names a run that lost its crate rows, and a single crate\'s own run has none of the aggregate fields', () => {
+    assert.match(problem((run) => { delete run.units; }), /^the run carries its roster, rosterSha256, order but lists none of its crates/);
+    assert.match(problem((run) => { delete run.units; delete run.roster; delete run.rosterSha256; }), /^the run carries its order but lists none of its crates/);
+    assert.equal(problem((run) => { delete run.units; delete run.roster; delete run.rosterSha256; delete run.order; }), null,
+      'a run with none of the aggregate fields is a single crate\'s run, which says nothing about scope');
   });
 
   it('refuses a stitch to a crate that is not another crate of the run, and one to the crate itself', () => {
@@ -295,7 +303,7 @@ describe('crateProblems', () => {
 
   it('does not refuse the one crate of an extraction that declares non-targets: its run has no status', () => {
     const run = runOf((directory) => [unit(directory, 'app', [], { nonTargets: [{ crate: 'dep', dir: 'dep', sources: [] }] })]);
-    delete run.units;
+    fixtures.asSingleCrate(run);
     delete run.status;
     assert.deepEqual(auto.crateProblems(run), []);
   });
@@ -324,7 +332,7 @@ describe('the roster of a run over several crates', () => {
   it('a single crate\'s run has no roster, and none is required of it', () => {
     const root = extracted((directory) => [unit(directory, 'libcrux_hmac', [])]);
     const state = readState(root);
-    for (const key of ['units', 'roster', 'rosterSha256']) delete state.extraction.run[key];
+    fixtures.asSingleCrate(state.extraction.run);
     writeState(root, state);
     const result = cli('read-state', '--project-root', root);
     assert.equal(result.status, 0, result.stdout);
@@ -391,7 +399,7 @@ describe('list-items --crate', () => {
   it('a single-crate extraction lists as before, with no --crate, or with its own crate name', () => {
     const root = extracted((directory) => [unit(directory, 'libcrux_hmac', [fn('libcrux_hmac::hmac::hmac', 'src/hmac.rs', 10)])]);
     const state = readState(root);
-    delete state.extraction.run.units;
+    fixtures.asSingleCrate(state.extraction.run);
     writeState(root, state);
     assert.equal(cli('list-items', '--project-root', root).json.items.length, 1);
     assert.equal(cli('list-items', '--project-root', root, '--crate', 'libcrux_hmac').json.items.length, 1);
