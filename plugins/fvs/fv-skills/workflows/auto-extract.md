@@ -73,6 +73,15 @@ checkout, and its hash and origin are recorded. The lock stays in `"$OUT/tree/Ca
 in the evidence directory (`$HOME/.fvs/extractions`, or `FVS_EVIDENCE_DIR`), and the whole attempt
 directory is kept for as long as the extraction record that cites it.
 
+When the repository is much larger than its targets, `trim-workspace --project-root "$CRATE_ROOT"
+--release "$RELEASE_DIR" --keep <the target crates>` prints, and writes nothing, the patches that cut
+the workspace down to the targets and what they need by path, with the crates left out, the size of
+the test-only ones (`--dev-dependencies drop` removes those), the `extraction.inputs` the trimmed
+copy needs, and the links under them (`links`, `proposedUnreadLinks`, as in the `crates` answer above;
+the owner's yes covers listing them in `extraction.unreadLinks`). Show it to the owner. Only the owner's yes installs the patches and writes those inputs;
+this track never installs them on its own, and the crates left out are recorded as `dropped` in the
+spec (`aeneas-extract.md`, "A workspace larger than the verification targets").
+
 ## Step 3: Hand off to the shared extractor
 
 Run `/fvs:aeneas-extract "$CRATE_ROOT"` with the recorded configuration (features, target and

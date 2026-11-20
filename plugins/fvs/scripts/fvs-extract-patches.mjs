@@ -62,6 +62,7 @@ function usage() {
     '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--crate NAME] [--format json|text]',
     '       node fvs-extract-patches.mjs attempt-status --out DIR [--crate NAME] [--format json|text]',
     '       node fvs-extract-patches.mjs crates (--out DIR | --project-root DIR) --release DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs trim-workspace --project-root DIR --release DIR --keep CRATE[,CRATE...] [--dev-dependencies keep|drop] [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
@@ -117,6 +118,18 @@ function usage() {
     'root) and changes nothing; it is advisory. On a copy it also names the path dependencies',
     'the patches removed and the packages the copy lacks; on a checkout it proposes the',
     'extraction.inputs a copy needs.',
+    '',
+    'trim-workspace prints, and writes nothing, the translation patches that cut the workspace down to',
+    'the crates in --keep (crate or package names) and every in-repo crate they need by path: the',
+    'members list of the root manifest loses the rest, and a root package that is not kept loses its',
+    'package tables so the workspace is virtual. With --dev-dependencies drop, path dev-dependencies',
+    'on crates that are not kept are removed from the kept manifests instead of keeping those crates.',
+    'The result names the kept and left-out crates (the library ones are what the spec lists as',
+    'dropped), the extraction.inputs the trimmed copy needs, and each patch with its sha256. cargo',
+    'reads the trimmed workspace, and every patch is applied to a clean copy of the originals, before',
+    'anything is printed. A symbolic link inside the kept crates, a members pattern, a manifest the',
+    'trim cannot read line by line, or a path dependency outside the checkout is refused. The owner',
+    'decides; installing the patches and the inputs is a separate, approved step.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -1630,6 +1643,424 @@ function listCrates(flags) {
   };
 }
 
+// trim-workspace: the patches that cut a workspace down to the crates the owner chose.
+//
+// It prints and writes nothing in the project. The manifests are edited as text, by a reader
+// that knows tables, keys, strings and values that span lines, because the edit has to be a
+// plain unified diff like any translation patch; a manifest it cannot read that way is refused,
+// never guessed at. cargo then reads the trimmed result (--no-deps, offline) and the patches
+// are applied to a clean copy of the originals, so what is printed is what the owner will get.
+const TOML_TOKEN = /"(?:[^"\\]|\\.)*"|'[^']*'|#.*/g;
+
+// The strings of one line, in order, up to a comment.
+function stringsOf(line) {
+  const found = [];
+  for (const token of line.match(TOML_TOKEN) ?? []) {
+    if (token.startsWith('#')) break;
+    found.push(token.slice(1, -1));
+  }
+  return found;
+}
+
+// Tracks the bracket depth and an open multi-line string across the lines of one value.
+function scanValue(line, state) {
+  let index = 0;
+  while (index < line.length) {
+    if (state.multi !== null) {
+      const close = line.indexOf(state.multi, index);
+      if (close < 0) return;
+      index = close + 3;
+      state.multi = null;
+      continue;
+    }
+    const char = line[index];
+    if (char === '#') return;
+    if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+      state.multi = line.slice(index, index + 3);
+      index += 3;
+    } else if (char === '"') {
+      index += 1;
+      while (index < line.length && line[index] !== '"') index += line[index] === '\\' ? 2 : 1;
+      index += 1;
+    } else if (char === "'") {
+      const close = line.indexOf("'", index + 1);
+      index = close < 0 ? line.length : close + 1;
+    } else {
+      if (char === '[' || char === '{') state.depth += 1;
+      else if (char === ']' || char === '}') state.depth -= 1;
+      index += 1;
+    }
+  }
+}
+
+// The dotted key at the start of a line or in a table header: ['target', 'cfg(unix)', 'dependencies'].
+function keyParts(text) {
+  const parts = [];
+  let index = 0;
+  const skip = () => { while (text[index] === ' ' || text[index] === '\t') index += 1; };
+  for (;;) {
+    skip();
+    let part;
+    if (text[index] === '"') {
+      let close = index + 1;
+      while (close < text.length && text[close] !== '"') close += text[close] === '\\' ? 2 : 1;
+      if (close >= text.length) return null;
+      part = text.slice(index + 1, close);
+      index = close + 1;
+    } else if (text[index] === "'") {
+      const close = text.indexOf("'", index + 1);
+      if (close < 0) return null;
+      part = text.slice(index + 1, close);
+      index = close + 1;
+    } else {
+      const bare = /^[A-Za-z0-9_-]+/.exec(text.slice(index));
+      if (!bare) return null;
+      part = bare[0];
+      index += part.length;
+    }
+    parts.push(part);
+    skip();
+    if (index >= text.length) return parts;
+    if (text[index] !== '.') return null;
+    index += 1;
+  }
+}
+
+// The position of the `=` that ends a key, outside quotes; -1 when the line has none.
+function equalsIndex(line) {
+  let index = 0;
+  while (index < line.length) {
+    const char = line[index];
+    if (char === '"') {
+      index += 1;
+      while (index < line.length && line[index] !== '"') index += line[index] === '\\' ? 2 : 1;
+    } else if (char === "'") {
+      const close = line.indexOf("'", index + 1);
+      if (close < 0) return -1;
+      index = close;
+    } else if (char === '=') {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+
+// Tables with the line range each occupies (the comment lines directly above a header belong
+// to it) and the keys inside them with theirs. Lines are zero-based and inclusive.
+function tomlLayout(text, where) {
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const unreadable = (index, why) => refuse('attempt-refused', `${where}, line ${index + 1}: ${why}; the trim edits only a manifest it can read line by line`);
+  const state = { depth: 0, multi: null };
+  const tables = [];
+  let entry = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (state.depth !== 0 || state.multi !== null) {
+      scanValue(line, state);
+      if (state.depth < 0) unreadable(index, 'a closing bracket that opens nothing');
+      entry.end = index;
+      continue;
+    }
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      const header = /^(\[\[?)\s*(.+?)\s*\]\]?\s*(?:#.*)?$/.exec(trimmed);
+      const parts = header ? keyParts(header[2]) : null;
+      if (parts === null) unreadable(index, 'a table header it cannot read');
+      let from = index;
+      while (from > 0 && lines[from - 1].trim().startsWith('#')) from -= 1;
+      if (tables.length > 0) tables[tables.length - 1].to = from - 1;
+      tables.push({ header: parts, array: header[1] === '[[', from, to: lines.length - 1, entries: [] });
+      continue;
+    }
+    const equals = equalsIndex(line);
+    const key = equals < 0 ? null : keyParts(line.slice(0, equals));
+    if (key === null) unreadable(index, 'a line that is neither a table header nor a key');
+    if (tables.length === 0) unreadable(index, 'a key before the first table');
+    entry = { key, start: index, end: index, equals };
+    tables[tables.length - 1].entries.push(entry);
+    scanValue(line.slice(equals + 1), state);
+    if (state.depth < 0) unreadable(index, 'a closing bracket that opens nothing');
+  }
+  if (state.depth !== 0 || state.multi !== null) unreadable(lines.length - 1, 'a value that does not end');
+  return { lines, tables };
+}
+
+// Removes the line ranges (inclusive) and puts replacement lines in their place.
+function applyLineEdits(layout, edits) {
+  const lines = [...layout.lines];
+  const last = layout.lines.length - 1;
+  for (const edit of [...edits].sort((a, b) => b.from - a.from)) lines.splice(edit.from, edit.to - edit.from + 1, ...(edit.replacement ?? []));
+  // Cutting the first or last table must not leave a blank line at that end of the file.
+  if (edits.some((edit) => edit.from === 0)) while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  if (edits.some((edit) => edit.to === last)) while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  return `${lines.join('\n')}\n`;
+}
+
+// Tables a root manifest keeps when its package goes, and the ones that belong to the package.
+const KEPT_ROOT_TABLES = new Set(['workspace', 'profile', 'patch', 'replace']);
+const PACKAGE_TABLES = new Set(['package', 'lib', 'bin', 'example', 'test', 'bench', 'features', 'dependencies', 'dev-dependencies', 'build-dependencies', 'target', 'lints', 'badges']);
+
+// The root manifest cut down to the kept directories: the members list loses every entry that is
+// not kept and, when the root package is not kept, the package's own tables go (the workspace
+// stays virtual). Nothing else is touched.
+function trimRootManifest(text, keptDirs, dropRootPackage) {
+  const layout = tomlLayout(text, 'Cargo.toml');
+  const edits = [];
+  let workspace = null;
+  for (const table of layout.tables) {
+    const top = table.header[0];
+    if (top === 'workspace' && table.header.length === 1) workspace = table;
+    if (KEPT_ROOT_TABLES.has(top)) continue;
+    if (!PACKAGE_TABLES.has(top)) refuse('attempt-refused', `Cargo.toml has a [${table.header.join('.')}] table the trim does not know; it edits only manifests whose tables it can classify`);
+    if (dropRootPackage) edits.push({ from: table.from, to: table.to });
+  }
+  if (workspace === null) refuse('attempt-refused', 'Cargo.toml has no [workspace] table, so there is no member list to trim');
+  const key = (name) => workspace.entries.find((item) => item.key.length === 1 && item.key[0] === name);
+  if (key('default-members')) refuse('attempt-refused', 'the workspace has default-members, which the trim does not rewrite; remove it in a patch first');
+  const members = key('members');
+  if (!members) refuse('attempt-refused', 'the workspace table has no members list (path dependencies make members implicitly), so there is nothing to trim');
+  const block = layout.lines.slice(members.start, members.end + 1);
+  const inner = [block[0].slice(members.equals + 1), ...block.slice(1)];
+  const listed = inner.map(stringsOf);
+  const clean = (member) => member.replace(/^\.\//, '').replace(/\/+$/, '');
+  const names = listed.flat();
+  const glob = names.find((member) => /[*?[\]{}]/.test(member));
+  if (glob !== undefined) refuse('attempt-refused', `the members list has a pattern (${JSON.stringify(glob)}); list the members one by one before trimming`);
+  const keep = (member) => keptDirs.has(clean(member));
+  const oneEach = listed[0].length === 0 && listed[listed.length - 1].length === 0 && listed.every((row) => row.length <= 1);
+  if (oneEach) {
+    listed.forEach((row, offset) => {
+      if (row.length === 1 && !keep(row[0])) edits.push({ from: members.start + offset, to: members.start + offset });
+    });
+  } else {
+    if (inner.some((line) => line.replace(TOML_TOKEN, (token) => (token.startsWith('#') ? token : '""')).includes('#'))) {
+      refuse('attempt-refused', 'the members list is written across lines with comments in a form the trim does not rewrite; put one member on each line first');
+    }
+    edits.push({ from: members.start, to: members.end, replacement: ['members = [', ...names.filter(keep).map((member) => `    ${JSON.stringify(member)},`), ']'] });
+  }
+  return { text: applyLineEdits(layout, edits), kept: names.filter(keep), removed: names.filter((member) => !keep(member)) };
+}
+
+// A kept crate's manifest without the path dev-dependencies named: the entries of its
+// [dev-dependencies] and [target.*.dev-dependencies] tables, or a [dev-dependencies.NAME] table.
+function dropDevDependencyEntries(text, names, where) {
+  const layout = tomlLayout(text, where);
+  const edits = [];
+  const found = new Set();
+  for (const table of layout.tables) {
+    const at = table.header.indexOf('dev-dependencies');
+    if (at < 0 || !(at === 0 || (table.header[0] === 'target' && at === 2))) continue;
+    if (table.header.length === at + 1) {
+      for (const item of table.entries) {
+        if (names.has(item.key[0])) {
+          edits.push({ from: item.start, to: item.end });
+          found.add(item.key[0]);
+        }
+      }
+    } else if (table.header.length === at + 2 && names.has(table.header[at + 1])) {
+      edits.push({ from: table.from, to: table.to });
+      found.add(table.header[at + 1]);
+    }
+  }
+  const missing = [...names].filter((name) => !found.has(name));
+  if (missing.length > 0) refuse('attempt-refused', `${where}: cannot find the dev-dependency ${missing.join(', ')} in a form the trim edits; remove it in a translation patch of your own`);
+  return applyLineEdits(layout, edits);
+}
+
+function treeBytes(dir) {
+  let total = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (name === 'target' || name === '.git') continue;
+    const stat = fs.lstatSync(path.join(dir, name));
+    total += stat.isDirectory() ? treeBytes(path.join(dir, name)) : stat.size;
+  }
+  return total;
+}
+
+// A unified diff of one file, with a/ and b/ paths as the translation patches carry them.
+function unifiedDiff(relative, before, after, scratch) {
+  for (const side of ['a', 'b']) fs.mkdirSync(path.join(scratch, side, path.dirname(relative)), { recursive: true });
+  fs.writeFileSync(path.join(scratch, 'a', relative), before);
+  fs.writeFileSync(path.join(scratch, 'b', relative), after);
+  const run = spawnSync('git', ['-c', 'core.abbrev=12', 'diff', '--no-index', '--no-prefix', '--no-color', '--no-ext-diff', '--', `a/${relative}`, `b/${relative}`], {
+    cwd: scratch, encoding: 'utf8', env: gitEnv({ GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' }),
+  });
+  if (run.error || run.status !== 1) refuse('tool-failed', `cannot diff ${relative}${run.error ? `: ${run.error.message}` : ''}`);
+  return run.stdout;
+}
+
+const listOf = (names, limit = 6) => (names.length <= limit ? names.join(', ') : `${names.slice(0, limit).join(', ')} and ${names.length - limit} more`);
+
+function trimWorkspace(flags) {
+  const projectRoot = fs.existsSync(flags['project-root']) ? fs.realpathSync(flags['project-root']) : refuse('usage', `--project-root ${flags['project-root']} does not exist`);
+  const mode = flags['dev-dependencies'] ?? 'keep';
+  if (!['keep', 'drop'].includes(mode)) refuse('usage', '--dev-dependencies must be keep or drop');
+  const wanted = [...new Set(flags.keep.split(',').map((name) => name.trim()).filter((name) => name !== ''))];
+  if (wanted.length === 0) refuse('usage', '--keep needs at least one crate');
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
+  const view = workspaceView(projectRoot, env, 'the checkout');
+  if (fs.realpathSync(view.metadata.workspace_root) !== projectRoot) refuse('attempt-refused', `the workspace root is ${view.metadata.workspace_root}, not the project root; the trim edits the manifest at the project root`);
+  const byDir = new Map(view.rows.map((row) => [row.abs, row]));
+  const selected = wanted.map((name) => {
+    const found = view.rows.find((row) => row.crate === name || row.package === name);
+    if (!found) refuse('invalid-input', `--keep names ${name}, which is not an in-repo crate of the workspace`);
+    if (!found.library) refuse('invalid-input', `--keep names ${name}, which has no library: only a crate with a library can be extracted`);
+    return found;
+  });
+
+  // The crates cargo needs a manifest of: the selected ones and every in-repo path dependency
+  // of them, to any depth. Dev-dependencies count unless they are dropped (then they are
+  // removed from the kept manifests instead).
+  const edges = (row, withDev) => row.item.dependencies.filter((dependency) => dependency.path && (withDev || dependency.kind !== 'dev')).map((dependency) => ({ dependency, target: realOrSelf(dependency.path) }));
+  const closure = (withDev) => {
+    const because = new Map(selected.map((row) => [row.abs, { reason: 'selected' }]));
+    const queue = [...selected];
+    while (queue.length > 0) {
+      const row = queue.shift();
+      for (const { dependency, target } of edges(row, withDev)) {
+        const next = byDir.get(target);
+        if (!next) refuse('attempt-refused', `${row.package} depends by path on ${dependency.name} at ${path.relative(projectRoot, target) || '.'}, which is outside the checkout or not a package; a copy cannot hold it`);
+        if (because.has(next.abs)) continue;
+        because.set(next.abs, { reason: `${dependency.kind === 'dev' ? 'dev-dependency' : 'path dependency'} of ${row.crate ?? row.package}` });
+        queue.push(next);
+      }
+    }
+    return because;
+  };
+  const normal = closure(false);
+  const full = closure(true);
+  const reached = mode === 'keep' ? full : normal;
+  const keptRows = view.rows.filter((row) => reached.has(row.abs));
+  const keptDirs = new Set(keptRows.map((row) => row.dir));
+  const devOnly = view.rows.filter((row) => full.has(row.abs) && !normal.has(row.abs))
+    .map((row) => ({ crate: row.crate ?? row.package, dir: row.dir, via: full.get(row.abs).reason, bytes: treeBytes(row.abs) }));
+
+  const rootRow = view.rows.find((row) => row.dir === '.');
+  const rootText = fs.readFileSync(path.join(projectRoot, 'Cargo.toml'), 'utf8');
+  const dropRootPackage = rootRow !== undefined && !keptDirs.has('.');
+  const trimmed = trimRootManifest(rootText, keptDirs, dropRootPackage);
+  const rewrites = new Map([['Cargo.toml', { before: rootText, after: trimmed.text }]]);
+  const devDropped = [];
+  if (mode === 'drop') {
+    for (const row of keptRows) {
+      const names = new Set(edges(row, true).filter(({ dependency, target }) => dependency.kind === 'dev' && !reached.has(target)).map(({ dependency }) => dependency.rename ?? dependency.name));
+      if (names.size === 0) continue;
+      const relative = row.dir === '.' ? 'Cargo.toml' : `${row.dir}/Cargo.toml`;
+      const before = fs.readFileSync(path.join(projectRoot, relative), 'utf8');
+      rewrites.set(relative, { before, after: dropDevDependencyEntries(before, names, relative) });
+      devDropped.push({ crate: row.crate ?? row.package, file: relative, dependencies: [...names].sort() });
+    }
+  }
+
+  const inputs = suggestedInputs(projectRoot, view.metadata, { rows: keptRows, unlisted: [] });
+  // A link the build certainly reads blocks the selection. Every other link under the kept crates
+  // is reported as `crates` reports it: listed in extraction.unreadLinks, proposed for the owner to
+  // list (generated C headers, say), or listed but no longer a link under these inputs (stale).
+  const linkReport = linksUnder(projectRoot, inputs, unreadLinks(readConfig(projectRoot)), keptRows);
+  const links = linkReport.blocking;
+  if (links.length > 0) {
+    const holder = (link) => keptRows.find((row) => row.dir === '.' ? !link.includes('/') : link === row.dir || link.startsWith(`${row.dir}/`));
+    refuse('attempt-refused', `a symbolic link lies inside the crates this selection needs (${links.slice(0, 3).join(', ')}${links.length > 3 ? ', ...' : ''}), and a copy holds regular files only; choose crates that do not need the directory, or replace the link in a translation patch of its own`, {
+      links,
+      holders: [...new Set(links.map((link) => holder(link)?.crate ?? holder(link)?.package).filter(Boolean))],
+      kept: keptRows.map((row) => ({ crate: row.crate ?? row.package, dir: row.dir, because: reached.get(row.abs).reason })),
+    });
+  }
+
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-trim-'));
+  try {
+    // cargo reads the trimmed workspace: a copy of exactly the inputs, with the new manifests.
+    const trial = path.join(scratch, 'trial');
+    fs.mkdirSync(trial);
+    for (const input of inputs) fs.cpSync(path.join(projectRoot, input), path.join(trial, input), { recursive: true, filter: (source) => !['target', '.git'].includes(path.basename(source)) });
+    for (const [relative, { after }] of rewrites) fs.writeFileSync(path.join(trial, relative), after);
+    const checked = workspaceView(fs.realpathSync(trial), env, 'the trimmed workspace');
+    const here = new Set(checked.rows.map((row) => row.package));
+    const expected = new Set(keptRows.map((row) => row.package));
+    const unexpected = [...here].filter((name) => !expected.has(name));
+    const absent = [...expected].filter((name) => !here.has(name));
+    if (unexpected.length > 0 || absent.length > 0) refuse('attempt-refused', `cargo reads the trimmed workspace with a different set of crates (extra: ${unexpected.join(', ') || 'none'}; missing: ${absent.join(', ') || 'none'})`);
+    const trialDirs = new Set(checked.rows.map((row) => row.abs));
+    for (const row of checked.rows) {
+      const open = row.item.dependencies.filter((dependency) => dependency.path && !trialDirs.has(realOrSelf(dependency.path)));
+      if (open.length > 0) refuse('attempt-refused', `after the trim, ${row.package} still depends by path on ${open.map((dependency) => dependency.name).join(', ')}, which the copy would not hold`);
+    }
+
+    const bodies = [];
+    for (const [relative, { before, after }] of rewrites) {
+      if (before === after) continue;
+      bodies.push({ relative, diff: unifiedDiff(relative, before, after, path.join(scratch, 'diff')) });
+    }
+    const rootBody = bodies.find((item) => item.relative === 'Cargo.toml');
+    const leftOut = view.rows.filter((row) => !reached.has(row.abs));
+    const patches = [];
+    if (rootBody) {
+      const header = [
+        `Supporting patch: trim the workspace manifest to ${listOf(selected.map((row) => row.crate))} and the crates they need`,
+        `Change: Cargo.toml: members lists the ${trimmed.kept.length} kept member(s) and drops ${trimmed.removed.length}${dropRootPackage ? `; the root package ${rootRow.package} and its tables are removed, so the workspace is virtual` : ''}.`,
+        `Why: the extraction copy holds only the listed inputs, and cargo needs the manifest of every workspace member in it; ${leftOut.length} in-repo package(s), among them ${listOf(leftOut.map((row) => row.crate ?? row.package), 4)}, are left out.`,
+        'Behaviour: no Rust source changes; the kept crates are built from the same sources, and a crate that is no longer in the workspace cannot add features to them.',
+        'Classification: A-mechanical',
+        `Assumptions: the kept crates are all that cargo needs to read for ${listOf(selected.map((row) => row.crate))}; every library crate left out is named in dropped (or nonTargets) of the extraction spec with the owner's decision.`,
+        'Obligations: none',
+        'Independent: yes',
+      ].join('\n');
+      patches.push({ name: 'trim-workspace-manifest.patch', touches: ['Cargo.toml'], text: `${header}\n\n${rootBody.diff}` });
+    }
+    for (const dropped of devDropped) {
+      const body = bodies.find((item) => item.relative === dropped.file);
+      const header = [
+        `Supporting patch: ${dropped.crate} drops its path dev-dependencies on crates left out of the copy`,
+        `Change: ${dropped.file}: remove the dev-dependencies ${dropped.dependencies.join(', ')}.`,
+        'Why: cargo must load the manifest of every path dependency, even for a build that does not compile tests, and these crates are not in the copy.',
+        'Behaviour: no effect on the normal build or on any Rust source; only test-only dependency edges are removed.',
+        'Classification: A-mechanical',
+        'Assumptions: none',
+        'Obligations: none',
+        'Independent: yes',
+      ].join('\n');
+      patches.push({ name: `trim-${dropped.file.replace(/\/Cargo\.toml$/, '').replace(/^Cargo\.toml$/, 'root').replace(/[^A-Za-z0-9]+/g, '-')}-dev-dependencies.patch`, touches: [dropped.file], text: `${header}\n\n${body.diff}` });
+    }
+
+    // What is printed is what applies: each patch goes onto a clean copy of the originals.
+    const clean = path.join(scratch, 'clean');
+    for (const [relative, { before }] of rewrites) {
+      fs.mkdirSync(path.dirname(path.join(clean, relative)), { recursive: true });
+      fs.writeFileSync(path.join(clean, relative), before);
+    }
+    for (const patch of patches) {
+      const applied = gitApply(clean, { bytes: Buffer.from(patch.text) });
+      if (applied.status !== 0) refuse('tool-failed', `the generated patch ${patch.name} does not apply to the checkout: ${first(`${applied.stderr}`.split('\n')).join(' | ')}`);
+    }
+    for (const [relative, { after }] of rewrites) {
+      if (fs.readFileSync(path.join(clean, relative), 'utf8') !== after) refuse('tool-failed', `the generated patches do not produce the trimmed ${relative}`);
+    }
+
+    return {
+      message: `keep ${keptRows.length} of ${view.rows.length} in-repo package(s) for ${listOf(selected.map((row) => row.crate))}; ${leftOut.length} left out; ${patches.length} patch(es) printed, nothing written`,
+      workspaceRoot: '.',
+      devDependencies: mode,
+      selected: selected.map((row) => row.crate),
+      kept: keptRows.map((row) => ({ package: row.package, crate: row.crate, dir: row.dir, because: reached.get(row.abs).reason })),
+      dropped: leftOut.filter((row) => row.library).map((row) => ({ package: row.package, crate: row.crate, dir: row.dir })),
+      devOnly,
+      members: { kept: trimmed.kept, removed: trimmed.removed },
+      rootPackageRemoved: dropRootPackage ? rootRow.package : null,
+      inputs,
+      unreadLinks: linkReport.listed,
+      proposedUnreadLinks: linkReport.proposed,
+      staleUnreadLinks: linkReport.stale,
+      config: { extraction: { inputs } },
+      patches: patches.map((patch) => ({ name: patch.name, touches: patch.touches, sha256: sha256(Buffer.from(patch.text)), text: patch.text })),
+    };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 // A multi-crate attempt: every crate gets an ordinary attempt of its own in
 // OUT/units/<crate> (so a failing crate ends only its own chain), all bound to
 // the same prepared manifest, and OUT/attempt.json lists them with their hashes.
@@ -3071,6 +3502,7 @@ const COMMANDS = {
   run: { required: ['out', 'step'], optional: ['crate'], run },
   'attempt-status': { required: ['out'], optional: ['crate'], run: attemptStatus },
   crates: { required: ['release'], optional: ['out', 'project-root'], run: listCrates },
+  'trim-workspace': { required: ['project-root', 'release', 'keep'], optional: ['dev-dependencies'], run: trimWorkspace },
 };
 
 function parseFlags(argv, required, optional = []) {

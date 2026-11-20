@@ -371,6 +371,45 @@ dependencies the patches removed (`pathDependenciesRemoved`) and the packages th
 the same from the workspace that `prepare --release` recorded. A workspace cargo cannot read (a missing member, inheritance without a workspace, a path
 dependency without a manifest) is reported with cargo's first error lines.
 
+**A workspace larger than the verification targets.** A copy holds a manifest for every workspace
+member, and a large repository (libcrux has 43 in-repo packages, one of them with a 42 MB test-vector
+directory) needs far more than the crates the owner verifies. `trim-workspace` prints, and writes
+nothing, the translation patches that cut the workspace down:
+
+```bash
+node "$PATCH_ENGINE" trim-workspace --project-root "$CRATE_ROOT" --release "$RELEASE_DIR" \
+  --keep "$TARGET_CRATES"   # comma-separated crate or package names; add --dev-dependencies drop to prune test-only path dependencies
+```
+
+The kept set is the `--keep` crates plus every in-repo crate they need by path. The root manifest's
+`members` list loses the rest, and a root package that is not kept loses its package tables so the
+workspace is virtual. With `--dev-dependencies drop`, a path dev-dependency on a crate that is not
+needed otherwise is removed from the kept manifest instead of pulling that crate in; the result
+lists those crates under `devOnly` with their size in bytes. The result also names the `kept` and
+`dropped` crates (the library ones among the dropped are what the spec lists as `dropped`), the
+`extraction.inputs` the trimmed copy needs (`config`), and each patch with its `sha256`. Before
+printing, the command has cargo read a trial copy of exactly those inputs and applies every patch to
+a clean copy of the originals. It refuses a `--keep` name that is not an in-repo crate or has no
+library, a `members` pattern (the owner lists the members one by one first), a manifest it cannot cut
+line by line, a path dependency outside the checkout, and a symbolic link inside the kept crates that
+the build certainly reads (`links`, as in `crates`). Every other link under the kept crates is reported
+as `crates` reports it: `unreadLinks` (already listed in `extraction.unreadLinks`),
+`proposedUnreadLinks` (each with its target and a suggested reason, for the owner to list) and
+`staleUnreadLinks` (listed, but no longer a link under these inputs). The printed `config` holds the
+inputs only; the owner's yes adds the link entries.
+
+Show the owner the kept and dropped crates, the `devOnly` bytes and the patches, and wait for a
+yes. That yes covers installing the patches AND writing the printed `extraction.inputs` into the
+project's configuration; the owner may instead keep a larger selection by running it again with other
+`--keep` names. On the yes, install each printed patch as in Step 6 (write it as
+`translation-patches/<name>.patch`, append the name to `series`, run `check`); the engine wrote them
+from the owner's choice of crates and has already applied them, so there is no model-written text to
+review, and the owner's yes is the ratification. Record each dropped library crate in the spec's
+`dropped` with the reason "left out by the owner's workspace trim". The trimmed manifests remove
+packages the existing `Cargo.lock` still lists, so run the next `prepare` with `--lock update
+--release "$RELEASE_DIR"` (or keep a lock that already matches); `crates --out "$OUT"` then lists the
+kept crates and shows the others under `packagesNotInCopy`.
+
 The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charonArgs`) and adds
 `main` (the crate the extraction record is about), `crates` (one entry per target) and
 `nonTargets`:
