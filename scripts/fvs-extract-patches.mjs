@@ -1328,25 +1328,21 @@ const relativeTo = (tree, dir) => path.relative(tree, dir).split(path.sep).join(
 const realOrSelf = (file) => (fs.existsSync(file) ? fs.realpathSync(file) : file);
 const pathDependencies = (item) => item.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path);
 
-function describeWorkspace(tree, metadata) {
-  const rows = metadata.packages.map((item) => {
-    const dir = path.dirname(fs.realpathSync(item.manifest_path));
-    const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
-    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) || dir === tree ? relativeTo(tree, dir) : null, abs: dir, library: library !== undefined, item };
-  }).filter((row) => row.dir !== null).sort((a, b) => a.dir.localeCompare(b.dir));
-  const byDir = new Map(rows.map((row) => [row.abs, row]));
-  const crates = rows.map((row) => ({
+// The crates of a set of package rows, the in-repo crates each one depends on (through the rows
+// given: a provider that is not among them is not a dependency), and a dependency order,
+// providers first. A row that is not a workspace member says so (member: false).
+function crateRows(rows) {
+  const sorted = [...rows].sort((a, b) => a.dir.localeCompare(b.dir));
+  const byDir = new Map(sorted.map((row) => [row.abs, row]));
+  const crates = sorted.map((row) => ({
     package: row.package,
     crate: row.crate,
     dir: row.dir,
     library: row.library,
+    member: row.member !== false,
     deps: [...new Set(pathDependencies(row.item).map((dependency) => byDir.get(realOrSelf(dependency.path)))
       .filter((provider) => provider !== undefined && provider.library).map((provider) => provider.crate))].sort(),
   }));
-  // --no-deps lists the workspace members only: a path dependency inside the tree that is
-  // not a member is not in the list above, so it is named here.
-  const unlistedAbs = [...new Set(rows.flatMap((row) => pathDependencies(row.item).map((dependency) => realOrSelf(dependency.path))
-    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)))].sort();
   const order = [];
   const visit = (row, seen = new Set()) => {
     if (order.includes(row.crate) || seen.has(row.crate)) return;
@@ -1355,7 +1351,21 @@ function describeWorkspace(tree, metadata) {
     order.push(row.crate);
   };
   crates.filter((row) => row.library).forEach((row) => visit(row));
-  return { rows, crates, order, unlistedAbs, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
+  return { crates, order };
+}
+
+function describeWorkspace(tree, metadata) {
+  const rows = metadata.packages.map((item) => {
+    const dir = path.dirname(fs.realpathSync(item.manifest_path));
+    const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
+    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) || dir === tree ? relativeTo(tree, dir) : null, abs: dir, library: library !== undefined, item };
+  }).filter((row) => row.dir !== null).sort((a, b) => a.dir.localeCompare(b.dir));
+  const byDir = new Map(rows.map((row) => [row.abs, row]));
+  // --no-deps lists the workspace members only: a path dependency inside the tree that is
+  // not a member is not in the list above, so it is named here (workspaceView follows it).
+  const unlistedAbs = [...new Set(rows.flatMap((row) => pathDependencies(row.item).map((dependency) => realOrSelf(dependency.path))
+    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)))].sort();
+  return { rows, ...crateRows(rows), unlistedAbs, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
 }
 
 const crateName = (name) => name.replace(/-/g, '_');
@@ -1395,6 +1405,7 @@ function workspaceView(tree, env, where) {
     metadata,
     described,
     rows,
+    roster: crateRows(rows),
     outside,
     unlisted: loose.map((dir) => relativeTo(tree, dir)).sort(),
     crates: [
@@ -1518,13 +1529,16 @@ function listCrates(flags) {
   const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
   const tree = fs.realpathSync(prepared ? prepared.tree : projectRoot);
   const view = workspaceView(tree, env, prepared ? 'the extraction copy' : 'the checkout');
-  const { described, metadata } = view;
+  const { described, metadata, roster } = view;
+  // The roster is the whole in-repo closure, not only the workspace members: a path dependency
+  // that is not a member is an in-repo crate the owner can choose as a target, and a crate a
+  // member depends on has to come before it in the order.
   const result = {
-    message: `${described.crates.length} in-repo package(s), ${described.order.length} with a library`,
+    message: `${roster.crates.length} in-repo package(s), ${roster.order.length} with a library`,
     tree,
     workspaceRoot: relativeTo(tree, metadata.workspace_root),
-    crates: described.crates,
-    order: described.order,
+    crates: roster.crates,
+    order: roster.order,
     unlisted: view.unlisted,
     ...(view.outside.length > 0 ? { outside: view.outside.map(({ package: name, manifest }) => ({ package: name, manifest })) } : {}),
   };
@@ -1539,14 +1553,14 @@ function listCrates(flags) {
   // leaves the comparison out, with the reason.
   let original;
   try {
-    original = describeWorkspace(projectRoot, cargoMetadata(projectRoot, env, 'the checkout'));
+    original = workspaceView(projectRoot, env, 'the checkout');
   } catch (error) {
     return { ...result, compared: { available: false, reason: error.message } };
   }
   const key = (row) => row.package;
-  const here = new Map(described.rows.map((row) => [key(row), row]));
+  const here = new Map(view.rows.map((row) => [key(row), row]));
   const dependencyKey = (row, dependency, base) => `${row.package}|${dependency.name}|${relativeTo(base, realOrSelf(dependency.path))}`;
-  const kept = new Set(described.rows.flatMap((row) => pathDependencies(row.item).map((dependency) => dependencyKey(row, dependency, tree))));
+  const kept = new Set(view.rows.flatMap((row) => pathDependencies(row.item).map((dependency) => dependencyKey(row, dependency, tree))));
   const pathDependenciesRemoved = original.rows.filter((row) => here.has(key(row)))
     .flatMap((row) => pathDependencies(row.item).filter((dependency) => !kept.has(dependencyKey(row, dependency, projectRoot)))
       .map((dependency) => ({ package: row.package, dependency: dependency.name, dir: relativeTo(projectRoot, realOrSelf(dependency.path)) })));

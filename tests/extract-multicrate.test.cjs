@@ -528,10 +528,10 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     const listed = crates(ws, out);
     assert.equal(listed.status, 0, listed.stdout);
     const row = (crate) => listed.result.crates.find((item) => item.package === crate);
-    assert.deepEqual(row('toy-app'), { package: 'toy-app', crate: 'toy_app', dir: 'app', library: true, deps: ['toy_lib'] });
-    assert.deepEqual(row('toy-lib'), { package: 'toy-lib', crate: 'toy_lib', dir: 'lib', library: true, deps: [] });
-    assert.deepEqual(row('toy-tool'), { package: 'toy-tool', crate: 'toy_tool', dir: 'tool', library: true, deps: ['toy_lib'] }, 'a dev-dependency is not a dependency of an extraction');
-    assert.deepEqual(row('toy-script'), { package: 'toy-script', crate: null, dir: 'script', library: false, deps: [] }, 'a package without a library cannot be a target');
+    assert.deepEqual(row('toy-app'), { package: 'toy-app', crate: 'toy_app', dir: 'app', library: true, member: true, deps: ['toy_lib'] });
+    assert.deepEqual(row('toy-lib'), { package: 'toy-lib', crate: 'toy_lib', dir: 'lib', library: true, member: true, deps: [] });
+    assert.deepEqual(row('toy-tool'), { package: 'toy-tool', crate: 'toy_tool', dir: 'tool', library: true, member: true, deps: ['toy_lib'] }, 'a dev-dependency is not a dependency of an extraction');
+    assert.deepEqual(row('toy-script'), { package: 'toy-script', crate: null, dir: 'script', library: false, member: true, deps: [] }, 'a package without a library cannot be a target');
     assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app', 'toy_tool']);
     assert.equal(listed.result.workspaceRoot, '.');
     assert.deepEqual(listed.result.unlisted, []);
@@ -589,8 +589,11 @@ describe('crates: the in-repo crates of a prepared copy', () => {
     const listed = crates(ws, out);
     assert.equal(listed.status, 0, listed.stdout);
     assert.deepEqual(listed.result.unlisted, ['lib']);
-    assert.deepEqual(listed.result.crates.map((item) => item.package), ['toy-app']);
-    assert.deepEqual(listed.result.crates[0].deps, [], 'a crate that is not listed is not a dependency in the list');
+    // The roster is the whole in-repo closure: the crate cargo does not list as a member is a crate
+    // the owner can choose, and the member that depends on it comes after it.
+    assert.deepEqual(listed.result.crates.map((item) => [item.package, item.member, item.deps]), [['toy-app', true, ['toy_lib']], ['toy-lib', false, []]]);
+    assert.deepEqual(listed.result.order, ['toy_lib', 'toy_app']);
+    assert.equal(listed.result.message, '2 in-repo package(s), 2 with a library');
   });
 
   it('reports a workspace cargo cannot read with cargo\'s own first lines', () => {
@@ -755,6 +758,16 @@ describe('multi-crate extraction: the workspace is accounted for', () => {
     const listed = engine(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
     assert.equal(listed.status, 0, listed.stdout);
     assert.deepEqual(listed.result.unlisted, ['deep', 'deeper', 'lib'], 'one manifest per call would stop at lib');
+    // The advertised roster carries every crate of the closure, with its dependencies and a
+    // providers-first order, so default-all offers app together with lib, deep and deeper.
+    assert.deepEqual(listed.result.crates.map((item) => [item.crate, item.member, item.deps]), [
+      ['toy_app', true, ['toy_lib']],
+      ['toy_deep', false, ['toy_deeper']],
+      ['toy_deeper', false, []],
+      ['toy_lib', false, ['toy_deep']],
+    ]);
+    assert.deepEqual(listed.result.order, ['toy_deeper', 'toy_deep', 'toy_lib', 'toy_app']);
+    assert.deepEqual(listed.result.crates.filter((item) => item.library).map((item) => item.crate).sort(), [...listed.result.order].sort());
     assert.deepEqual(listed.result.inputs.filter((input) => ['deep', 'deeper', 'lib'].includes(input)), ['deep', 'deeper', 'lib']);
   });
 });
