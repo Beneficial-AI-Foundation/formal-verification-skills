@@ -22,7 +22,9 @@
 // swapping one for another counts), a lakefile may not appear below the project root, and a new Trusted file
 // is allowed only for axioms tied to an externals record the owner accepted. Strings and layout are
 // compared exactly; only comments, docstrings, guards and the layout of a recalled statement are free. No Lean file or
-// lakefile of the commit may name debug.skipKernelTC or addDeclWithoutChecking, whatever the merged spec had. The glob guard refuses a spec,
+// lakefile of the commit may name debug.skipKernelTC or addDeclWithoutChecking, whatever the merged spec had. A path
+// package inside the repository (a Lake dependency that is a folder of the commit) must be the merged spec's own, file for
+// file (the same git tree id), because the Lean-level comparison reads only the project's own modules. The glob guard refuses a spec,
 // proof or extraction file that no lean_lib glob of a default target reaches, because Lake would
 // never compile it; the lakefile, the manifest and lean-toolchain are frozen. A commit that fails a
 // guard gets a failed receipt and no build runs.
@@ -409,6 +411,35 @@ function copyPackages(source, destination) {
     if (spawnSync('cp', args, { stdio: 'ignore' }).status === 0) return mode;
   }
   return refuse('packages-not-copied', `the prebuilt packages in ${source} could not be copied`);
+}
+
+// A path package that lives in the repository is built from the commit's own files, and the Lean-level
+// comparison does not read its constants (only the project's own modules are dumped), so a change inside it
+// could change what a statement means with no trace. It must therefore be the merged spec's own package, file
+// for file: the same folder, with the same git tree id, at the head and at the merged spec. `packages` are the
+// manifest's entries (those of type path); `prefix` is the Lean project's folder in the repository. A path
+// package that is not a folder below the Lean project cannot be compared this way and is refused.
+export function pathPackageProblems({ top, base, head, prefix, packages }) {
+  const problems = [];
+  const checked = [];
+  const refusal = (kind, file, detail) => problems.push({ kind, file, statement: null, detail });
+  for (const item of packages.filter((entry) => entry?.type === 'path')) {
+    const dir = path.posix.normalize(path.posix.join('.', String(item.dir ?? '.')));
+    // One that leaves the repository altogether is refused later, before any build, by the package check.
+    const inRepository = path.posix.normalize(path.posix.join(prefix || '.', dir));
+    if (path.posix.isAbsolute(dir) || inRepository === '..' || inRepository.startsWith('../')) continue;
+    if (dir === '.' || dir === '..' || dir.startsWith('../')) {
+      refusal('path-package-outside-project', 'lake-manifest.json', `the dependency ${item.name} is a path package at ${item.dir}, which is not a folder below the Lean project, so it cannot be compared with the merged spec; a path package must be a folder of the project that is the merged spec's own`);
+      continue;
+    }
+    const at = (commit) => git(top, ['rev-parse', '--verify', '--quiet', `${commit}:${prefix ? `${prefix}/` : ''}${dir}`]);
+    const [was, now] = [at(base), at(head)];
+    checked.push({ name: item.name, dir, tree: now });
+    if (was === null || now === null || was !== now) {
+      refusal('path-package-changed', `${dir}/`, `the dependency ${item.name} is a package inside the commit (${dir}/) and ${was === null ? 'is not in the merged spec' : now === null ? 'is gone since the merged spec' : 'differs from the merged spec'}; the Lean-level comparison does not read a path package's constants, so the whole package must be the merged spec's own, file for file`);
+    }
+  }
+  return { problems, checked };
 }
 
 function extractCommit(top, commit, workdir, cleanRoot) {
@@ -1425,7 +1456,16 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       externals: () => { const records = externalsFile()?.data?.records; return Array.isArray(records) ? records : null; },
     });
     let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsSnapshot ?? null);
-    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
+    // A package inside the repository is compared whole: the folders with a lakefile that the comparison
+    // above leaves out are exactly these.
+    const pathPackages = { checked: [] };
+    const manifestEntries = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'lake-manifest.json'), 'utf8')).packages ?? []; } catch { return []; } };
+    if (specBaseFull !== null) {
+      const found = pathPackageProblems({ top, base: specBaseFull, head: full, prefix, packages: manifestEntries(leanRoot) });
+      integrity.problems.push(...found.problems);
+      pathPackages.checked = found.checked;
+    }
+    const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout, pathPackages: pathPackages.checked };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
       return finish(receipts, full, {
@@ -1439,7 +1479,9 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     const source = packages ? path.resolve(packages) : path.join(root, below, '.lake', 'packages');
     const revisions = manifest.length === 0 ? {} : checkPackages({ packages: manifest, source, cleanRoot, leanRoot });
     const destination = path.join(leanRoot, '.lake', 'packages');
-    const copy = manifest.length === 0 ? 'none' : copyPackages(source, destination);
+    // Only a package fetched into the packages folder is copied; a path package is built from the commit itself.
+    const fetched = manifest.some((item) => item.type !== 'path');
+    const copy = fetched ? copyPackages(source, destination) : 'none';
 
     const env = { ...gitEnvironment(), LEAN_NUM_THREADS: '2' };
     const lakeVersion = (spawnSync('lake', ['--version'], { cwd: leanRoot, encoding: 'utf8', env }).stdout ?? '').split('\n')[0].trim();
@@ -1510,10 +1552,22 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
       if (unbuilt.length > 0) reason = `Lake did not build ${unbuilt[0].rel} from that file in this build (lake build --no-build does not report it up to date)${unbuilt.length > 1 ? ` (and ${unbuilt.length - 1} more)` : ''}`;
     }
     integrityRecord.sourceCheck = { files: integrity.required.length, calls: sourceCheck.calls };
+    // The manifest as Lake left it after the build: a path package that Lake resolved but the committed
+    // manifest did not list is compared like the others.
+    if (reason === null && specBaseFull !== null) {
+      const listed = new Set(pathPackages.checked.map((entry) => entry.name));
+      const late = pathPackageProblems({ top, base: specBaseFull, head: full, prefix, packages: manifestEntries(leanRoot).filter((entry) => !listed.has(entry?.name)) });
+      integrityRecord.pathPackages.push(...late.checked);
+      if (late.problems.length > 0) {
+        integrityRecord.problems.push(...late.problems);
+        integrityRecord.ok = false;
+        reason = `${describeProblem(late.problems[0])}${late.problems.length > 1 ? ` (and ${late.problems.length - 1} more)` : ''}`;
+      }
+    }
     // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
     if (reason === null && specBaseFull !== null) {
       const accepted = new Set((externalsFile()?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id));
-      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted });
+      const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: fetched, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted });
       if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
       else {
         integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };

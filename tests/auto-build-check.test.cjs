@@ -65,6 +65,7 @@ if [ "$1" = build ]; then
     wait
   fi
   ls .lake/build > "$STUB/\${tag}prebuild-listing" 2>&1
+  if [ -f "$STUB/manifest-after" ] && [ -z "$tag" ]; then cp "$STUB/manifest-after" lake-manifest.json; fi
   cat Specs/A.lean > "$STUB/\${tag}seen-A.lean" 2>/dev/null
   if [ -f "$STUB/\${tag}oleans" ] || [ -f "$STUB/oleans" ]; then
     list="$STUB/oleans"; if [ -f "$STUB/\${tag}oleans" ]; then list="$STUB/\${tag}oleans"; fi
@@ -708,8 +709,8 @@ const EXTERNALS = (...records) => ({ schema: 'fvs/auto-externals', schemaVersion
 // Commits BASE_FILES (the merged spec), then the head files on top, and writes the run state.
 // `merged` is the spec merge commit, `tip` the proof head.
 // `sub` puts the Lean project in a folder of the repository, and `base` replaces the merged spec's files.
-function layered({ head = HEAD_FILES, base = BASE_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false, sub = '', dsl = false } = {}) {
-  const fx = fixture({ spec: 'import Dep\n', sub, dsl, files: { ...base, ...(dsl ? { 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage fixture\n' } : { 'lakefile.toml': lakefile }) } });
+function layered({ head = HEAD_FILES, base = BASE_FILES, remove = [], lakefile = FORMAL_LAKEFILE, externals = EXTERNALS(record()), recorded = false, sub = '', dsl = false, manifestExtra = [] } = {}) {
+  const fx = fixture({ spec: 'import Dep\n', sub, dsl, manifestExtra, files: { ...base, ...(dsl ? { 'lakefile.lean': 'import Lake\nopen Lake DSL\n\npackage fixture\n' } : { 'lakefile.toml': lakefile }) } });
   const merged = fx.commit;
   for (const [name, text] of Object.entries(head)) write(path.join(fx.lean, name), text);
   for (const name of remove) fs.rmSync(path.join(fx.lean, name));
@@ -1067,6 +1068,83 @@ describe('the merged spec: changes that are refused', () => {
     const old = { 'lakefile.toml': lake(''), 'Foo/P.lean': 'set_option debug.skipKernelTC true\ndef p := 1\n' };
     assert.deepEqual(kinds(old, old), [['unchecked-declaration', 'Foo/P.lean']], 'the same text in the merged spec itself is refused too');
     assert.deepEqual(kinds({ 'lakefile.toml': lake(''), 'Foo/P.lean': 'def p := 1\n', '.lake/packages/dep/Dep.lean': 'set_option debug.skipKernelTC true\n', 'README.md': 'debug.skipKernelTC\n' }), [], 'a prebuilt package and a file that is not Lean are not read');
+  });
+
+  // A package inside the repository is built from the commit's own files, and the Lean-level comparison does
+  // not read its constants, so the whole package has to be the merged spec's own.
+  describe('a path package inside the repository', () => {
+    const LOCAL = { type: 'path', name: 'local', dir: 'vendor/local', inherited: false, configFile: 'lakefile.toml' };
+    const INNER = { 'vendor/local/lakefile.toml': 'name = "local"\n', 'vendor/local/Local.lean': 'def Local.good : Prop := False\n', 'vendor/local/data/table.txt': 'one\n' };
+    const withPackage = (head = {}, options = {}) => layered({ manifestExtra: [LOCAL], base: { ...BASE_FILES, ...INNER }, head: { ...HEAD_FILES, ...head }, ...options });
+
+    test('one that is the merged spec’s own, file for file, is accepted, and the receipt names its tree', () => {
+      const fx = withPackage();
+      const result = checkTip(fx);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.pathPackages, [{ name: 'local', dir: 'vendor/local', tree: git(fx.repo, 'rev-parse', `${fx.tip}:vendor/local`) }]);
+    });
+
+    test('a changed Lean file, a changed file that is not Lean, an added and a removed file are each refused before any build', () => {
+      for (const [name, head, remove] of [
+        ['a Lean file', { 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' }, []],
+        ['a file that is not Lean', { 'vendor/local/data/table.txt': 'two\n' }, []],
+        ['an added file', { 'vendor/local/Extra.lean': 'def Local.extra := 1\n' }, []],
+        ['a removed file', {}, ['vendor/local/data/table.txt']],
+      ]) {
+        const fx = withPackage(head, { remove });
+        const result = checkTip(fx);
+        assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+        assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/local/']], name);
+        assert.match(result.json.label, /the dependency local is a package inside the commit \(vendor\/local\/\) and differs from the merged spec; .*the whole package must be the merged spec's own/, name);
+        noBuild(fx);
+      }
+    });
+
+    test('one that the merged spec lacks, or whose folder is gone, is refused too', () => {
+      const added = withPackage({}, { base: BASE_FILES, head: { ...HEAD_FILES, ...INNER } });
+      const problems = (result) => result.json.integrity.problems.filter((p) => p.kind === 'path-package-changed');
+      assert.match(problems(checkTip(added))[0]?.detail ?? '', /is not in the merged spec/, 'the lakefile it adds is refused as well, first');
+      const gone = layered({ manifestExtra: [LOCAL], base: { ...BASE_FILES, ...INNER }, head: HEAD_FILES, remove: Object.keys(INNER) });
+      assert.match(problems(checkTip(gone))[0]?.detail ?? '', /is gone since the merged spec/);
+    });
+
+    test('a package that another package requires is compared as well, by its path below the project', () => {
+      const SUB = { type: 'path', name: 'sub', dir: 'vendor/local/../sub', inherited: true, configFile: 'lakefile.toml' };
+      const files = { ...INNER, 'vendor/sub/lakefile.toml': 'name = "sub"\n', 'vendor/sub/Sub.lean': 'def Sub.x := 1\n' };
+      const make = (head) => layered({ manifestExtra: [LOCAL, SUB], base: { ...BASE_FILES, ...files }, head: { ...HEAD_FILES, ...head } });
+      const same = checkTip(make({}));
+      assert.equal(same.status, 0, same.stderr);
+      assert.deepEqual(same.json.integrity.pathPackages.map((p) => [p.name, p.dir]), [['local', 'vendor/local'], ['sub', 'vendor/sub']]);
+      const changed = checkTip(make({ 'vendor/sub/Sub.lean': 'def Sub.x := 2\n' }));
+      assert.deepEqual(changed.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/sub/']]);
+    });
+
+    test('a path package that is not a folder below the Lean project cannot be compared and is refused', () => {
+      const up = { type: 'path', name: 'up', dir: '../vendor/up', inherited: false, configFile: 'lakefile.toml' };
+      const result = checkTip(layered({ sub: 'proj', manifestExtra: [up] }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => p.kind), ['path-package-outside-project']);
+    });
+
+    test('one that Lake resolved but the committed manifest did not list is compared after the build', () => {
+      const fx = withPackage({ 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' }, { manifestExtra: [] });
+      write(path.join(fx.stub, 'manifest-after'), JSON.stringify({ version: '1.1.0', packages: [LOCAL] }));
+      const result = checkTip(fx);
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/local/']]);
+      const same = withPackage({}, { manifestExtra: [] });
+      write(path.join(same.stub, 'manifest-after'), JSON.stringify({ version: '1.1.0', packages: [LOCAL] }));
+      const accepted = checkTip(same);
+      assert.equal(accepted.status, 0, accepted.stderr);
+      assert.deepEqual(accepted.json.integrity.pathPackages.map((p) => p.name), ['local']);
+    });
+
+    test('with no merged spec nothing is compared with, and the build is not an acceptance', () => {
+      const fx = withPackage({ 'vendor/local/Local.lean': 'def Local.good : Prop := True\n' });
+      const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
+      assert.equal(result.json.label, 'built, integrity not checked');
+      assert.deepEqual(result.json.integrity.pathPackages, []);
+    });
   });
 
   test('a project one folder below the repository root is compared by the same rules', () => {
@@ -1962,6 +2040,40 @@ describe('real Lean: a statement that still reads the same but does not mean the
     assert.deepEqual(result.json.integrity.ties, [], 'the text of the Trusted file has no axiom');
     assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
     assert.deepEqual(result.json.externals.records, [{ id: 'gap-add', sha256: recordDigest(record({ id: 'gap-add' })) }]);
+  });
+
+  // A package inside the repository is built from the commit's own files and its constants are not read by the
+  // Lean-level comparison, so a change in it, under an unchanged manifest, could turn a false statement true.
+  describe('a Lake path package inside the repository', () => {
+    const MANIFEST = JSON.stringify({ version: '1.3.0', packagesDir: '.lake/packages', packages: [{ type: 'path', scope: '', name: 'dep', manifestFile: 'lake-manifest.json', inherited: false, dir: 'vendor/dep', copy: false, configFile: 'lakefile.toml' }], name: 'fx', lakeDir: '.lake', fixedToolchain: false });
+    const baseFiles = (good) => ({
+      'lakefile.toml': `${REAL_LAKEFILE}\n[[require]]\nname = "dep"\npath = "vendor/dep"\n`,
+      'lake-manifest.json': MANIFEST,
+      'vendor/dep/lakefile.toml': 'name = "dep"\n\n[[lean_lib]]\nname = "Dep"\n',
+      'vendor/dep/Dep.lean': `def Dep.Good : Prop := ${good}\n`,
+      'Fx/Proofs/P.lean': 'import Dep\n\ntheorem Fx.target : Dep.Good := by\n  sorry\n',
+      'Fx/Specs/A.lean': 'import Fx.Proofs.P\n\nrecall Fx.target : Dep.Good\n\n#print axioms Fx.target\n',
+    });
+    const head = (dep) => ({
+      ...(dep === undefined ? {} : { 'vendor/dep/Dep.lean': `def Dep.Good : Prop := ${dep}\n` }),
+      'Fx/Proofs/P.lean': 'import Dep\n\ntheorem Fx.target : Dep.Good := trivial\n',
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.target : Dep.Good\n\n${GUARD_NONE('Fx.target')}`,
+    });
+    const run = (fx) => realCheck(fx, ['--packages', fs.mkdtempSync(path.join(fx.base, 'packages-'))]);
+
+    test('one that is unchanged is accepted, and the receipt names its tree', () => {
+      const fx = realProject(head(), { baseFiles: baseFiles('True') });
+      const result = run(fx);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.pathPackages, [{ name: 'dep', dir: 'vendor/dep', tree: git(fx.repo, 'rev-parse', `${fx.tip}:vendor/dep`) }]);
+    });
+
+    test('Dep.Good changed from False to True under an unchanged manifest and an unchanged recall is refused, with no build', () => {
+      const result = run(realProject(head('True'), { baseFiles: baseFiles('False') }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file]), [['path-package-changed', 'vendor/dep/']]);
+      assert.equal(result.json.build, null, 'refused before the build');
+    });
   });
 
   // Which file Lake compiled is Lake's to say. A file that no library maps, or one whose module name another
