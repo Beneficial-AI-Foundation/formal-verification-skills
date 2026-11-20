@@ -1105,34 +1105,80 @@ function runValid(run) {
     && publicationValid(run.publication, run.translation);
 }
 
+// What ties a crate's stitch to a provider: the provider, the digest of the provider's own publish
+// stage that the stitch was made from, and the Lean modules it imports. An entry without them is only
+// a label, and a label does not make the crate use the provider's translation.
+const stitchEntries = (unit) => [].concat(unit?.stitch ?? []).filter((entry) => entry !== null && typeof entry === 'object');
+const stitchEvidence = (entry) => isText(entry.provider) && SHA256.test(entry.providerStageSha256 ?? '')
+  && Array.isArray(entry.modules) && entry.modules.length > 0 && entry.modules.every(isText);
+
 // The roster of a run over several crates, which the extraction engine hashes (the main crate, the
-// crates in order, each with its stitch providers, the non-targets and the crates a patch removed).
-// Every unit row and the run carry the same hash, and the roster must name exactly the rows the run
-// holds: a row dropped from the aggregate, or one added, cannot pass for the extraction that was made.
-function rosterValid(run) {
+// crates in order, each with its package, folder and stitch providers, the non-targets and the crates a
+// patch removed). The roster is rebuilt from the rows the run holds and must agree with them field for
+// field, besides carrying the hash every row and the run carry: a row dropped from the aggregate, one
+// added, or one whose package, folder, stitch or non-targets changed cannot pass for the extraction that
+// was made. Returns the first disagreement in words, or null.
+function rosterProblem(run) {
   const { roster, rosterSha256, units } = run;
-  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return false;
-  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return false;
+  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return 'the roster does not match its hash';
+  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return 'a crate carries another roster than the run';
   const crates = units.map((unit) => unit.crate);
-  const same = (list) => Array.isArray(list) && list.length === crates.length && new Set(list).size === list.length && list.every((crate) => crates.includes(crate));
-  return same(roster.order) && same(Array.isArray(roster.units) ? roster.units.map((entry) => entry?.crate) : null)
-    && (!isText(run.crate) || roster.main === run.crate);
+  const spelt = (crate) => typeof crate === 'string' && CRATE_NAME.test(crate);
+  const bad = crates.find((crate) => !spelt(crate));
+  if (bad !== undefined) return `${JSON.stringify(bad)} is not a crate name`;
+  const same = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, at) => item === b[at]);
+  if (new Set(crates).size !== crates.length || !Array.isArray(roster.order) || roster.order.length !== crates.length || !roster.order.every((crate) => crates.includes(crate))) {
+    return 'a crate is missing from the run, or was added to it';
+  }
+  if (!same(roster.order, run.order)) return 'the order of the crates is not the roster\'s';
+  if (!Array.isArray(roster.units) || roster.units.length !== roster.order.length) return 'the roster lists other crates than its order';
+  if (isText(run.crate) && roster.main !== run.crate) return 'the main crate is not the roster\'s';
+  for (const [at, crate] of roster.order.entries()) {
+    const row = units.find((unit) => unit.crate === crate);
+    const listed = roster.units[at];
+    const providers = [...new Set(stitchEntries(row).map((entry) => entry.provider))].sort();
+    if (listed?.crate !== crate || listed.package !== row.package || listed.dir !== row.dir || !same(Array.isArray(listed.stitch) ? [...new Set(listed.stitch)].sort() : null, providers)) {
+      return `crate ${crate} does not match its roster entry (package, folder or stitch providers)`;
+    }
+  }
+  const keyOf = (entry) => `${entry?.crate}\u0000${entry?.dir ?? ''}`;
+  if (!Array.isArray(roster.nonTargets)) return 'the roster lists its non-targets in another form';
+  const nonTargets = roster.nonTargets.map(keyOf).sort();
+  for (const row of units) {
+    if (!same((Array.isArray(row.nonTargets) ? row.nonTargets : []).map(keyOf).sort(), nonTargets)) return `crate ${row.crate} names other non-target crates than the roster`;
+  }
+  if (!Array.isArray(roster.dropped) || !roster.dropped.every((entry) => spelt(entry?.crate) && isText(entry.reason))) return 'the roster lists its dropped crates in another form';
+  if (roster.dropped.some((entry) => crates.includes(entry.crate) || roster.nonTargets.some((other) => other?.crate === entry.crate))) return 'a dropped crate is also in the run or a non-target';
+  return null;
 }
 
 // A run over several crates lists each crate's whole single-crate run in `units`, so
 // a reader written for one crate reads any crate's row unchanged. Every unit comes
 // from the same prepared copy as the main run, so it carries the same manifest hash,
-// and the same roster.
-function unitsValid(run) {
-  const { units, order } = run;
-  if (units === undefined) return true;
-  if (!Array.isArray(units) || units.length === 0) return false;
-  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return false;
-  const crates = units.map((unit) => unit.crate);
-  return new Set(crates).size === crates.length && rosterValid(run)
-    && (order === undefined || (Array.isArray(order) && order.length === crates.length && new Set(order).size === order.length && order.every((crate) => crates.includes(crate))));
+// and the same roster. A stitch is more than a label: it names the provider's publish stage that it was
+// made from, which must be the one the provider's row holds, and the crate's imports are its providers.
+// Returns the first problem in words, or null.
+export function unitsProblem(run) {
+  const { units } = run;
+  if (units === undefined) return null;
+  if (!Array.isArray(units) || units.length === 0) return 'the run lists no crate';
+  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return 'a crate row is not a valid run of this copy';
+  const roster = rosterProblem(run);
+  if (roster !== null) return roster;
+  for (const unit of units) {
+    for (const entry of stitchEntries(unit)) {
+      if (!stitchEvidence(entry)) return `the stitch of ${unit.crate} to ${isText(entry.provider) ? entry.provider : '(no provider)'} carries no evidence (the digest of the provider's publish stage and the Lean modules it imports)`;
+      const provider = units.find((row) => row.crate === entry.provider);
+      if (provider === undefined || provider === unit) return `crate ${unit.crate} is stitched to ${entry.provider}, which is not another crate of the run`;
+      if (provider.stages?.publish !== entry.providerStageSha256) return `the stitch of ${unit.crate} was made from another publication of ${entry.provider} than the run holds`;
+    }
+    const named = new Set(stitchEntries(unit).map((entry) => entry.provider));
+    if (Array.isArray(unit.imports) && (unit.imports.length !== named.size || !unit.imports.every((crate) => named.has(crate)))) return `crate ${unit.crate} imports crates its stitch does not name`;
+  }
+  return null;
 }
 
+const unitsValid = (run) => unitsProblem(run) === null;
 const recordedRunValid = (run) => runValid(run) && unitsValid(run);
 
 // The recorded run of one crate. Without a crate it is the main run, which is all a
@@ -1148,6 +1194,21 @@ export function runOf(state, crate) {
 // The unit rows of a run: its units, or the run itself when it names its crate.
 const unitsOf = (run) => run?.units ?? (isText(run?.crate) ? [run] : []);
 
+// The crates a unit depends on, by every way the record names one: its Lean imports, the target
+// crates its LLBC reaches (`dependsOn` and the foreign target crates), the ones the extraction left
+// unstitched, and its stitch providers. The order of the crates and the stitch obligation read this
+// one set, so an edge named in one place and not another cannot be ordered yet go unchecked.
+function crateEdges(unit) {
+  const names = (list) => (Array.isArray(list) ? list : []);
+  return new Set([
+    ...names(unit.imports),
+    ...names(unit.dependsOn),
+    ...names(unit.unstitched),
+    ...stitchEntries(unit).map((entry) => entry.provider),
+    ...names(unit.foreignCrates).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate),
+  ].filter(isText));
+}
+
 // The crates of an extraction that has more than one (or any, with `always`), with the
 // other extracted crates each one depends on and an order that puts providers before
 // consumers. A crate depends on another when its Lean imports it, when it is stitched to it
@@ -1157,13 +1218,7 @@ function crateView(run, always = false) {
   const units = unitsOf(run);
   if (units.length < (always ? 1 : 2)) return null;
   const crates = units.map((unit) => unit.crate);
-  const names = (list, pick) => (Array.isArray(list) ? list.map(pick) : []);
-  const dependsOn = new Map(units.map((unit) => [unit.crate, [...new Set([
-    ...names(unit.imports, (crate) => crate),
-    ...names(unit.dependsOn, (crate) => crate),
-    ...names([].concat(unit.stitch ?? []), (entry) => entry?.provider),
-    ...names(unit.foreignCrates?.filter((entry) => entry?.kind === 'target'), (entry) => entry.crate),
-  ])].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
+  const dependsOn = new Map(units.map((unit) => [unit.crate, [...crateEdges(unit)].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
   const derived = [];
   const rest = [...crates].sort();
   const ready = () => rest.find((crate) => dependsOn.get(crate).every((other) => derived.includes(other)));
@@ -1183,21 +1238,31 @@ function crateView(run, always = false) {
 
 // What the extraction and the owner's agreement together say about the crates of this
 // project, or null when there is nothing to say: a single crate, no non-target crate
-// the extraction declared and no crate decision in the agreement. A target is an
-// extracted crate the owner did not drop; a crate the agreement names a target but the
-// extraction lacks is missing; a non-target crate, declared by the extraction or dropped
-// by the owner, only has assumptions.
+// the extraction declared, no crate a patch removed from the copy and no crate decision in
+// the agreement. A target is an extracted crate the owner did not drop; a crate the agreement
+// names a target but the extraction lacks is missing; a non-target crate, declared by the
+// extraction or dropped by the owner, only has assumptions. A crate a patch removed from the
+// copy (`omitted`: its sources are left out, or its path dependency became a registry release)
+// is such a crate too, and the extraction's own reason for removing it is no substitute for the
+// owner's decision: it waits for that decision like a declared non-target.
 function crateContextOf(state) {
   const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
   if (!extraction) return null;
   const { run } = extraction;
   const units = unitsOf(run);
   const agreed = state.agreements?.at(-1)?.payload?.targets ?? null;
-  const declared = [...new Set([run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText))].sort();
+  const omitted = new Map((Array.isArray(run?.roster?.dropped) ? run.roster.dropped : []).filter((entry) => isText(entry?.crate)).map((entry) => [entry.crate, isText(entry.reason) ? entry.reason : null]));
+  const declared = [...new Set([...[run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText), ...omitted.keys()])].sort();
   if (units.length < 2 && declared.length === 0 && agreed === null) return null;
-  const view = crateView(run, true);
-  if (view === null) return null;
   const dropped = new Set((agreed?.nonTargets ?? []).map((entry) => entry.crate));
+  const view = crateView(run, true);
+  if (view === null) {
+    // An extraction that holds no crate at all (it carries no attempt) says nothing against an
+    // agreement that names several: none of those crates is held, so none can be accepted, and the
+    // obligation to verify each of them stays.
+    if (units.length > 0 || declaredCrates({ targets: agreed }).length < 2) return null;
+    return { view: { order: [], units: [] }, units, extracted: [], targets: [], missing: agreed.crates, nonTargets: new Set([...declared, ...dropped]), omitted, undecided: [], unlisted: [] };
+  }
   // Providers first; the crates of a dependency cycle have no place in the order and follow it.
   const extracted = [...view.order, ...(view.cycle ?? [])];
   const targets = extracted.filter((crate) => !dropped.has(crate));
@@ -1205,7 +1270,9 @@ function crateContextOf(state) {
     view, units, extracted, targets,
     missing: (agreed?.crates ?? []).filter((crate) => !extracted.includes(crate)),
     nonTargets: new Set([...declared, ...dropped]),
-    // Declared non-target crates whose owner decision is not in the agreement yet.
+    omitted,
+    // Declared non-target crates and crates removed from the copy whose owner decision is not in the
+    // agreement yet.
     undecided: declared.filter((crate) => !dropped.has(crate)),
     // Extracted crates that an agreement with crate decisions names as neither a target nor a non-target.
     unlisted: agreed === null ? [] : targets.filter((crate) => !agreed.crates.includes(crate)),
@@ -1213,6 +1280,17 @@ function crateContextOf(state) {
 }
 
 const crateContext = (root) => crateContextOf(loadState(root));
+
+// The crates a recorded extraction has to account for: the ones the owner's agreement names (targets and
+// non-targets) and the in-repo library crates of the workspace the copy was prepared from (its
+// inventory, which a copy prepared with a release folder records). More than one means the scope is
+// several crates, and only an attempt over all of them can stand for it.
+export function declaredCrates({ manifest = null, targets = null } = {}) {
+  const named = [...(Array.isArray(targets?.crates) ? targets.crates : []), ...(Array.isArray(targets?.nonTargets) ? targets.nonTargets.map((entry) => entry?.crate) : [])];
+  const original = manifest?.workspace?.original?.crates;
+  const inRepo = (Array.isArray(original) ? original : []).filter((row) => row?.library).map((row) => row.crate);
+  return [...new Set([...named, ...inRepo].filter(isText))].sort();
+}
 
 function crateReport(context, acceptance = null) {
   const status = new Map((acceptance ?? []).map((entry) => [entry.crate, entry]));
@@ -1228,7 +1306,30 @@ function proofAcceptance(root, state, specs, context) {
   if (!context || !specMerge) return null;
   const proofPr = specs.prs.slice(specs.prs.lastIndexOf(specMerge) + 1).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
   const receipt = proofPr ? buildCheckReceipt(root, proofPr.head) : null;
-  return receipt?.accepted && receipt.specBase === specMerge.mergeCommit ? crateAcceptance(root, specs, context, receipt) : null;
+  if (!(receipt?.accepted && receipt.specBase === specMerge.mergeCommit)) return null;
+  // The phase and the per-crate report read one verdict on the receipt: a receipt that does not count
+  // for the phase accepts no crate either.
+  return crateAcceptance(root, specs, context, receipt, crateReceiptProblem(root, state, specs, context, receipt, proofPr.head));
+}
+
+// Why an accepting receipt of the proof head does not count for a run over several crates, or null:
+// the allowed axioms cannot be derived at the head (`underivable`), the receipt was made with
+// another list or none (`list`), or the externals records are not the ones the check read
+// (`externals`). The list names only the axioms an accepted record puts on it, so a record whose
+// content changed while its status and source stayed leaves the list as it was: the receipt names the
+// digest of the whole externals file the check read, and the file now has to be that one.
+function crateReceiptProblem(root, state, specs, context, receipt, head) {
+  const allowed = allowedAxiomList(root, state, context, head, specs);
+  if (allowed.problems.length > 0) return { kind: 'underivable', text: `the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}` };
+  if (receipt.allowAxioms?.sha256 !== allowed.sha256) {
+    return { kind: 'list', text: `it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'})` };
+  }
+  let current = null;
+  try { current = sha256(fs.readFileSync(externalsPath(root))); } catch { /* no externals file: the check read none either */ }
+  if ((receipt.externals?.sha256 ?? null) !== current) {
+    return { kind: 'externals', text: 'the externals records are not the ones the check read (the file changed after the check, or the receipt does not name the file it read)' };
+  }
+  return null;
 }
 
 // The pairs of verified crates where the consumer's LLBC reaches items of the provider but the
@@ -1237,12 +1338,10 @@ function proofAcceptance(root, state, specs, context) {
 // never be. A crate the owner does not verify may be assumed, so it makes no pair.
 function unstitchedPairs(context) {
   return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
-    const linked = new Set([...(Array.isArray(unit.imports) ? unit.imports : []), ...[].concat(unit.stitch ?? []).map((entry) => entry?.provider)]);
-    const reached = (Array.isArray(unit.foreignCrates) ? unit.foreignCrates : []).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate)
-      .filter((crate) => !linked.has(crate));
-    // The extraction names the target crates it left unstitched itself; that is the same case.
-    const named = Array.isArray(unit.unstitched) ? unit.unstitched : [];
-    return [...new Set([...reached, ...named])].filter((crate) => isText(crate) && crate !== unit.crate && context.targets.includes(crate))
+    // Linked means a stitch with its evidence: an import label alone, or a stitch entry that names
+    // no provider publication and no module, does not make the crate use the provider's translation.
+    const linked = new Set(stitchEntries(unit).filter(stitchEvidence).map((entry) => entry.provider));
+    return [...crateEdges(unit)].filter((crate) => crate !== unit.crate && context.targets.includes(crate) && !linked.has(crate)).sort()
       .map((provider) => ({ crate: unit.crate, provider }));
   });
 }
@@ -1282,7 +1381,9 @@ function crateWarnings(context) {
   ];
 }
 
-const crateDecisions = (context) => context.undecided.map((crate) => `non-target crate ${crate}: the owner has not recorded a decision in the agreement`);
+const crateDecisions = (context) => context.undecided.map((crate) => (context.omitted.has(crate)
+  ? `crate ${crate} left out of the extraction copy: the owner has not recorded a decision in the agreement`
+  : `non-target crate ${crate}: the owner has not recorded a decision in the agreement`));
 
 // The target crates the build check accepted at the head of the proof PR. The check builds the
 // whole project once, so a crate is accepted when every statement of its recorded spec files
@@ -1291,8 +1392,11 @@ const crateDecisions = (context) => context.undecided.map((crate) => `non-target
 // unstitchedPairs). What the statements may rest on beyond Lean's standard axioms is not judged
 // here: the build check enforces the allowed axioms, and the state requires a receipt made with
 // the current list (see allowedAxiomList).
-function crateAcceptance(root, specs, context, receipt) {
-  if (context.targets.length === 0) return [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }];
+function crateAcceptance(root, specs, context, receipt, blocked = null) {
+  // The crates the agreement names but the extraction lacks follow either way: an extraction that holds
+  // none of them (no attempt, or one for other crates) leaves every one of them to be accepted.
+  const result = context.targets.length === 0 && context.extracted.length > 0
+    ? [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }] : [];
   const prefix = repositoryPrefix(root);
   const pruned = ownerChangesOf(specs);
   const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
@@ -1317,17 +1421,21 @@ function crateAcceptance(root, specs, context, receipt) {
     return statements === 0 ? 'the build check built no statement of this crate' : null;
   };
   const accepted = new Set();
-  const result = [];
   // Providers come first, so a crate is judged after the crates it depends on.
   for (const crate of context.targets) {
-    const reason = reasonOf(crate) ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
+    const reason = (blocked === null ? null : `the build check receipt does not count: ${blocked.text}`) ?? reasonOf(crate)
+      ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
     if (reason === null) accepted.add(crate);
     result.push({ crate, accepted: reason === null, ...(reason === null ? {} : { reason }) });
   }
   for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
   // A crate the extraction only assumes is a black box in every crate that calls it, and nobody but the
   // owner decides that a crate is not verified: until the agreement records it, the run is not done.
-  for (const crate of context.undecided) result.push({ crate, accepted: false, reason: 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
+  for (const crate of context.undecided) {
+    result.push({ crate, accepted: false, reason: context.omitted.has(crate)
+      ? `the extraction left this crate out of the copy${context.omitted.get(crate) === null ? '' : ` (${context.omitted.get(crate)})`}, and the owner has not recorded that decision in the agreement`
+      : 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
+  }
   return result;
 }
 
@@ -1501,6 +1609,13 @@ function recordSourceProblem(record, context) {
   return null;
 }
 
+// What native_decide and bv_decide add to a statement's axioms, as the build check names them. The
+// build check judges such an axiom against the merged spec by its exact name: one the statement already
+// rested on there is kept and flagged, a new one is refused. The list never holds one, so a name that
+// looks native is not a way around that rule, and an unchanged baseline dependency needs no entry.
+const NATIVE_AXIOM = /\._native\.(native_decide|bv_decide)\.ax_|^Lean\.(ofReduceBool|trustCompiler)$/;
+const NATIVE_REASON = 'it is an axiom that native_decide or bv_decide adds: the build check judges it against the merged spec (an unchanged one is flagged, a new one refused), so it is never listed';
+
 // The axioms a run over several crates may rest on at `commit`: for each target crate, its live spec
 // files and the fully qualified, sorted axioms its statements may rest on (`crates`), the distinct
 // names over all of them (`axioms`), each axiom withheld and why, and the problems that stop the
@@ -1549,7 +1664,8 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
         const rustPath = docRustPath(axiom.doc);
         const owner = rustPath?.split('::')[0];
         const withhold = (reason) => withheld.push({ name: axiom.full, file: file.posix, reason });
-        if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
+        if (NATIVE_AXIOM.test(axiom.full)) withhold(NATIVE_REASON);
+        else if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
         else if (owner !== unit.crate && !foreign.has(owner)) withhold(`its crate ${owner} is not one the extraction recorded for ${unit.crate}`);
         else if (!context.targets.includes(owner)) own.get(unit.crate).add(axiom.full);
         else if (owner === unit.crate) {
@@ -1564,7 +1680,8 @@ export function allowedAxiomList(root, state, context, commit, specs = null) {
     const file = read(relative);
     for (const axiom of file?.axioms ?? []) {
       const records = docRecordIds(axiom.doc).filter((id) => accepted.has(id)).map((id) => accepted.get(id));
-      const reason = records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
+      const reason = NATIVE_AXIOM.test(axiom.full) ? NATIVE_REASON
+        : records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
       if (reason) withheld.push({ name: axiom.full, file: file.posix, reason });
       else trusted.add(axiom.full);
     }
@@ -1805,13 +1922,54 @@ const PR_KINDS = ['spec', 'proof'];
 const OWNER_CHANGES = { pruned: 'pruned by owner', 'owner-changed': 'changed by owner in review' };
 const currentSpecRows = (specs) => [...new Map((specs?.specs ?? []).map((row) => [row.specFile, row])).values()];
 const lastPr = (specs, kind) => (specs?.prs ?? []).filter((pr) => pr.kind === kind).at(-1);
+// One record has one digest: the digest of its canonical JSON (keys in order), the same one the build
+// check computes when it writes a receipt (fvs-build-check.mjs, recordDigest).
+const recordDigest = (record) => crypto.createHash('sha256').update(canonicalJson(record ?? null)).digest('hex');
+// The version of the receipt the build check writes (fvs-build-check.mjs, `schema`). Version 2 is the
+// first whose acceptance rests on the Lean-level comparison of the statements with the merged spec; an
+// older receipt is read as older and never counted, so it takes a new check to be accepted again.
+const BUILD_CHECK_RECEIPT_SCHEMA = 2;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+// The Lean-level comparison an acceptance must carry: the toolchain it ran on, the declarations compared,
+// the new Trusted axioms it bound to their records, and the digests of both dumps.
+const hasLeanComparison = (semantic) => semantic !== null && typeof semantic === 'object'
+  && semantic.toolchain !== null && typeof semantic.toolchain === 'object'
+  && Array.isArray(semantic.statements) && semantic.statements.length > 0 && Array.isArray(semantic.bindings)
+  && ['base', 'head'].every((side) => SHA256_HEX.test(semantic.dumps?.[side] ?? ''));
+// Why an accepting receipt no longer holds, or null. A receipt of another version, or without the
+// Lean-level comparison, does not count. The receipt lists the externals records its
+// acceptance relied on, each with a digest; a record that changed, is gone, or cannot be read now means
+// the authority the check used is not the one on record, so the check has to run again.
+function staleReason(root, receipt) {
+  if (receipt.schema !== BUILD_CHECK_RECEIPT_SCHEMA) return `it is a version ${receipt.schema ?? 'unknown'} receipt, made before the build check compared the statements with the merged spec in Lean (this engine reads version ${BUILD_CHECK_RECEIPT_SCHEMA})`;
+  if (!hasLeanComparison(receipt.integrity?.semantic)) return 'it carries no Lean-level comparison of the statements with the merged spec (integrity.semantic)';
+  const bound = receipt.externals;
+  if (!bound || !Array.isArray(bound.records)) return 'it does not list the externals records it relied on (an older build check wrote it)';
+  // Every axiom the Lean-level check bound to a record needs that record's digest in the list, so a record
+  // revoked after the check is seen; a binding with no digest rests on an authority nothing can re-check.
+  const listed = new Set(bound.records.map((entry) => entry?.id));
+  const unlisted = receipt.integrity.semantic.bindings.find((binding) => !listed.has(binding?.record));
+  if (unlisted) return `the Lean-level check bound the axiom ${unlisted.axiom} to the externals record ${unlisted.record}, but the receipt carries no digest of that record`;
+  if (bound.records.length === 0) return null;
+  let records;
+  try { records = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'externals.json'), 'utf8')).records; } catch { return 'the externals records it relied on cannot be read now'; }
+  for (const entry of bound.records) {
+    const now = Array.isArray(records) ? records.find((record) => record?.id === entry?.id) : undefined;
+    if (!now) return `the externals record ${entry?.id} it relied on is no longer recorded`;
+    if (recordDigest(now) !== entry.sha256) return `the externals record ${entry.id} it relied on changed after the check`;
+  }
+  return null;
+}
 // The build check's receipt for a full commit SHA, or null when it is missing,
-// unreadable or for another commit. Only the receipt decides acceptance.
+// unreadable or for another commit. Only the receipt decides acceptance. An accepting receipt whose
+// externals records no longer hold comes back not accepting, with the reason in `stale`.
 function buildCheckReceipt(root, head) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) return null;
   try {
     const receipt = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'build-check', `${head}.json`), 'utf8'));
-    return receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' && typeof receipt.label === 'string' ? receipt : null;
+    if (!(receipt?.kind === 'fvs-build-check' && receipt.commit === head && typeof receipt.accepted === 'boolean' && typeof receipt.label === 'string')) return null;
+    const stale = receipt.accepted ? staleReason(root, receipt) : null;
+    return stale === null ? receipt : { ...receipt, accepted: false, stale };
   } catch {
     return null;
   }
@@ -2034,25 +2192,33 @@ function progress(root, state, specs = null) {
     // not accepted, and it counts only when it was made with the allowed axioms of this commit. A
     // single-crate project has no crate context.
     const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
-    const allowed = context ? allowedAxiomList(root, state, context, proofPr.head, specs) : null;
-    if (allowed && (allowed.problems.length > 0 || receipt.allowAxioms?.sha256 !== allowed.sha256)) {
+    const gate = context ? crateReceiptProblem(root, state, specs, context, receipt, proofPr.head) : null;
+    if (gate) {
       return { phase: 'proofs', warnings,
-        nextAction: allowed.problems.length > 0
-          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
-          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'}). ${checkSteps}; read-state reports done when it accepts.` + suffix };
+        nextAction: gate.kind === 'underivable'
+          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but ${gate.text}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
+          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${gate.text}. ${checkSteps}; read-state reports done when it accepts.` + suffix };
     }
     const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
     if (receipt?.accepted && heldToSpec && rejected.length === 0) {
-      return { phase: 'done', warnings,
+      // With several crates the build check refuses a native-decision axiom the merged spec did not rest
+      // on, so a flag on its accepting receipt is a dependency the spec base already had. The owner's
+      // review decides it: the flag is reported, not hidden in the receipt.
+      const flagged = context && Array.isArray(receipt.flags) ? receipt.flags.filter(isText) : [];
+      const flagWarning = flagged.length > 0 ? [`the build check flags ${flagged.join('; ')}: a native-decision axiom the merged spec already rested on, which the owner's review decides`] : [];
+      return { phase: 'done', warnings: [...warnings, ...flagWarning],
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
-          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
+          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix
+          + flagWarning.map((warning) => ` Warning: ${warning}.`).join('') };
     }
     if (rejected.length > 0) {
       return { phase: 'proofs', warnings,
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but not every verified crate is accepted: ${rejected.map((entry) => `crate ${entry.crate ?? '(none)'}: ${entry.reason}`).join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix };
     }
     return { phase: 'proofs', warnings,
-      nextAction: (receipt?.accepted
+      nextAction: (receipt?.stale
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${receipt.stale}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
+        : receipt?.accepted
         ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
         : receipt
           ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.`
@@ -2443,9 +2609,10 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
   }
   let inputs = null;
+  let manifest = null;
   if (checks.status.ok) {
     const bytes = fs.readFileSync(path.join(copy, 'manifest.json'));
-    const manifest = JSON.parse(bytes);
+    manifest = JSON.parse(bytes);
     const { revision } = state.choices.source;
     const crate = manifest.projectRoot;
     if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
@@ -2476,16 +2643,25 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // An attempt recorded by the patch engine is attached only after the engine
   // re-validates its whole chain against the current files.
   let run;
-  if (fs.existsSync(path.join(copy, 'attempt.json'))) {
+  const attempted = fs.existsSync(path.join(copy, 'attempt.json'));
+  if (attempted) {
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
     else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
-    else if (!unitsValid(status.run)) reasons.push('the crates of the recorded extraction attempt do not agree with its roster (a crate is missing, added or changed): extract again');
+    else if (unitsProblem(status.run) !== null) reasons.push(`the crates of the recorded extraction attempt do not agree with its roster (${unitsProblem(status.run)}): extract again`);
     else run = status.run;
   }
   // Providers must come before consumers, and a verified crate must be stitched to the verified
   // crates it uses, with the targets the owner's latest agreement names.
-  reasons.push(...crateProblems(run, state.agreements?.at(-1)?.payload?.targets ?? null));
+  const agreedTargets = state.agreements?.at(-1)?.payload?.targets ?? null;
+  reasons.push(...crateProblems(run, agreedTargets));
+  // When the scope is several crates (the agreement names them, or the workspace holds them), only a
+  // completed attempt over all of them can be recorded: a missing attempt, or the attempt of one crate,
+  // is never read as "nothing else to verify". An attempt that was refused has its own reason above.
+  const inScope = declaredCrates({ manifest, targets: agreedTargets });
+  if (inScope.length > 1 && (attempted ? run !== undefined && run.roster === undefined : true)) {
+    reasons.push(`the crates ${inScope.join(', ')} are in scope (the agreement names them, or the workspace holds them), but the copy holds ${attempted ? 'the attempt of one crate only' : 'no extraction attempt'}: record a completed attempt over all of them, with an extraction spec that makes each crate a target, a non-target or dropped`);
+  }
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
     recordedAt: now(),

@@ -68,8 +68,16 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/fvs-build-check.mjs" --project-root <root> -
 ```
 
 The state reports `done` only when the receipt was made with the list the engine derives from that commit
-today and also holds for every target crate. A new or changed externals record, or a changed file, changes
-the list: write it and run the check again. `allowed-axioms` prints each axiom it leaves out and why.
+today, was made with the externals records as they are now, and also holds for every target crate. A new,
+accepted or revoked externals record, or a changed Lean file, can change the list, so write it again. The
+check also records the externals file it read, and a record that changed in any other way (its model, its
+decision or its evidence) makes the receipt stale even when the list stays the same: run the check again
+in both cases. `allowed-axioms` prints each axiom it leaves out and why.
+
+A native-decision axiom (`native_decide` or `bv_decide`) is never in the list, and a name that only looks
+native does not get in. The check judges it against the merged spec: one a statement already rested on
+there is kept and flagged, a new one fails. When an accepted receipt carries flags, `read-state` shows
+them as a warning on the `done` state, so the owner's review sees them.
 
 A crate's section holds the axioms its own published Lean declares and the owner may assume, those of every
 crate it depends on (a crate it is stitched to, or one its code calls, followed to the end), and the Trusted
@@ -106,7 +114,16 @@ accepted when:
 
 A crate the extraction only assumes (a non-target) also keeps the run from being done until the owner records
 the decision about it in the agreement; `pendingDecisions` names it. Nobody but the owner decides that a
-crate is not verified.
+crate is not verified. The same holds for a library crate of the workspace that is missing from the
+extraction, and for one a patch removed from the copy.
+
+`record-extraction` records the extraction as succeeded only for the scope the owner agreed. When the
+agreement names several crates, or the workspace holds several library crates, it refuses a copy with no
+extraction attempt and one with the attempt of a single crate: extract every crate, then record again. It
+also refuses a run whose crates do not agree with its roster (each crate's package, folder and stitch
+providers, the order, the non-targets and the crates a patch removed), and a stitch that does not name the
+Lean modules it imports and the digest of the provider's publication it was made from. A label such as
+an import does not count as a stitch. In each case the reason says what to do.
 
 Dispatch workers providers first, in the order `crates.order` gives, and accept bottom-up, one crate at a
 time. A crate that depends on another may be proved early against the other crate's reviewed statement, but
