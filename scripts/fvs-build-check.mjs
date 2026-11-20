@@ -1275,15 +1275,16 @@ const canonicalJson = (value) => JSON.stringify(value, (_key, item) => (item !==
   ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item));
 export const recordDigest = (record) => sha256(canonicalJson(record ?? null));
 
-// The externals records a check relied on (the ones its accepted Trusted axioms are tied to), each with
-// a digest of the record as it stood. A consumer that finds a record changed or gone knows the receipt
-// was made on an authority that no longer holds.
-function externalsBinding(ties, externalsFile) {
+// The externals records a check relied on (the ones its new Trusted axioms are tied to, by the text of the
+// files and by what the Lean program bound), each with a digest of the record as it stood in the one
+// snapshot of externals.json the check read. A consumer that finds a record changed or gone knows the
+// receipt was made on an authority that no longer holds.
+function externalsBinding(ids, externalsFile) {
   const records = new Map((externalsFile?.data?.records ?? []).map((record) => [record?.id, record]));
   return {
     file: externalsFile?.file ?? null,
     sha256: externalsFile?.sha256 ?? null,
-    records: [...new Set(ties.map((tie) => tie.record))].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
+    records: [...new Set(ids)].sort().map((id) => ({ id, sha256: recordDigest(records.get(id)) })),
   };
 }
 
@@ -1399,14 +1400,18 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     // The project's folder in the repository, with `/` separators; empty when it is the repository root.
     const prefix = path.join(sub, below).split(path.sep).filter((part) => part && part !== '.').join('/');
     const layout = extractionLayout(readRunRecord(root, 'state.json'), { root, top, prefix });
-    let externalsFile = null;
+    // externals.json is read once, when the first rule needs it, and every later use (the records a new
+    // Trusted axiom is tied to, the ids the Lean program may bind, the digests in the receipt) is of that
+    // snapshot. A file that cannot be read refuses the check; it never reads as no records.
+    let externalsSnapshot;
+    const externalsFile = () => (externalsSnapshot === undefined ? (externalsSnapshot = readRunFile(root, 'externals.json')) : externalsSnapshot);
     const integrity = checkIntegrity({
       base: specBaseFull === null ? null : gitTree(top, specBaseFull, prefix, layout),
       head: gitTree(top, full, prefix, layout),
       layout,
-      externals: () => { externalsFile = readRunFile(root, 'externals.json'); const records = externalsFile?.data?.records; return Array.isArray(records) ? records : null; },
+      externals: () => { const records = externalsFile()?.data?.records; return Array.isArray(records) ? records : null; },
     });
-    const externalsRecord = externalsBinding(integrity.ties, externalsFile);
+    let externalsRecord = externalsBinding(integrity.ties.map((tie) => tie.record), externalsSnapshot ?? null);
     const integrityRecord = { specBase: specBaseFull, compared: specBaseFull !== null, ok: integrity.problems.length === 0, problems: integrity.problems, ties: integrity.ties, extraction: layout };
     if (!integrityRecord.ok) {
       const reason = `${describeProblem(integrity.problems[0])}${integrity.problems.length > 1 ? ` (and ${integrity.problems.length - 1} more)` : ''}`;
@@ -1489,13 +1494,19 @@ export function buildCheck({ projectRoot, commit, specBase, allowAxioms, package
     }
     // The Lean-level comparison with the merged spec. Without a merged spec there is nothing to compare.
     if (reason === null && specBaseFull !== null) {
-      const accepted = (() => {
-        try { const file = externalsFile ?? readRunFile(root, 'externals.json'); return new Set((file?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id)); } catch (error) { if (error instanceof Refusal) return new Set(); throw error; }
-      })();
+      const accepted = new Set((externalsFile()?.data?.records ?? []).filter((r) => r?.status === 'assumption-accepted' && r.decision && typeof r.id === 'string').map((r) => r.id));
       const lean = leanCheck({ top, sub, below, specBaseFull, work, leanRoot, source, hasPackages: manifest.length > 0, env, timeoutSeconds, integrity, recalled, recalledFiles, allowed, acceptedIds: accepted, builtModule });
       if (lean.error) reason = `the Lean check could not run: ${lean.error}`;
       else {
         integrityRecord.semantic = { toolchain: lean.toolchain, statements: lean.statements, bindings: lean.bindings, dumps: lean.dumps };
+        // The receipt names every record the acceptance rests on: those the text of the new Trusted files ties
+        // axioms to and those the Lean program bound (a command can make an axiom the text never shows). A tie
+        // in the text that Lean did not bind to the same record is a disagreement, and is refused.
+        const bound = new Set(lean.bindings.map((binding) => binding.record));
+        for (const tie of lean.problems.length > 0 ? [] : integrity.ties) {
+          if (!bound.has(tie.record)) lean.problems.push({ kind: 'tie-not-bound', file: tie.file, statement: tie.axiom, detail: `the text of ${tie.file} ties the axiom ${tie.axiom} to the record ${tie.record}, but the Lean program bound no axiom to that record` });
+        }
+        externalsRecord = externalsBinding([...integrity.ties.map((tie) => tie.record), ...lean.bindings.map((binding) => binding.record)], externalsSnapshot ?? null);
         if (lean.problems.length > 0) {
           integrityRecord.problems.push(...lean.problems);
           integrityRecord.ok = false;

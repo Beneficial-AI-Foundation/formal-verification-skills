@@ -84,6 +84,28 @@ for (const id of args.recalls) {
   console.log(JSON.stringify({ recall: id, matches: [id], rests: [{ n: id, axioms: [] }] }));
   console.log(JSON.stringify({ n: id, k: 'thm', m: 'Stub', lp: [], t: 'stub statement', d: [] }));
 }
+// Like the real program for an accepted assumption: every accepted record has a frozen proposition in the
+// merged spec, and a Trusted file of the project whose docstring cites the record has an axiom asserting it.
+for (const id of args.ids) {
+  console.log(JSON.stringify({ n: 'Prop.' + id, k: 'defn', m: 'formal.specs.Defs.Gaps', lp: [], t: 'Prop', v: id, d: [] }));
+  console.log(JSON.stringify({ doc: 'Prop.' + id, m: 'formal.specs.Defs.Gaps', cites: [id], prop: true, axiom: false }));
+}
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name.startsWith('.') ? [] : e.isDirectory() ? walk(dir + '/' + e.name) : [dir + '/' + e.name]));
+if (side === 'head') {
+  const tick = String.fromCharCode(96);
+  for (const file of walk(process.cwd()).filter((f) => f.toLowerCase().includes('/trusted/') && f.endsWith('.lean'))) {
+    const module = file.slice(process.cwd().length + 1, -5).split('/').join('.');
+    let cited = null;
+    for (const line of fs.readFileSync(file, 'utf8').split('\\n')) {
+      cited = args.ids.find((id) => line.includes(tick + id + tick)) ?? cited;
+      if (!line.startsWith('axiom ') || cited === null) continue;
+      const name = line.split(' ')[1];
+      console.log(JSON.stringify({ n: 'Gap.' + name, k: 'axiom', m: module, lp: [], t: 'Prop', d: ['Prop.' + cited], tc: 'Prop.' + cited, pr: true }));
+      console.log(JSON.stringify({ doc: 'Gap.' + name, m: module, cites: [cited], prop: false, axiom: true }));
+      cited = null;
+    }
+  }
+}
 `;
 
 const sh = (cwd, file, args, env = {}) => {
@@ -1505,6 +1527,35 @@ describe('the Lean program: what runs, and what an unusable run means', () => {
     assert.deepEqual(result.json.externals.records.map((r) => r.id), ['gap-div']);
   });
 
+  test('the receipt names the records the Lean program bound, even when the text of the files shows no tie', async () => {
+    const { recordDigest } = await library();
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const fx = layered({ head: withoutTrusted });
+    const result = checkTip(fx, { dump: DUMPS() });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.integrity.ties, [], 'no file of the commit has an axiom declaration to tie');
+    assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Gap.div_spec', record: 'gap-div', proposition: 'Div' }]);
+    assert.deepEqual(result.json.externals.records, [{ id: 'gap-div', sha256: recordDigest(record()) }]);
+  });
+
+  test('a tie the text finds that the Lean program did not bind is a disagreement, and is refused', () => {
+    const fx = layered();
+    const result = checkTip(fx, { dump: DUMPS({ constants: [FOO, DIV()], docs: BASE_DOCS }) });
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.json.integrity.problems.map((p) => [p.kind, p.file, p.statement]), [['tie-not-bound', 'formal/trusted/Gaps.lean', 'div_spec']]);
+    assert.match(result.json.label, /ties the axiom div_spec to the record gap-div, but the Lean program bound no axiom to that record/);
+  });
+
+  test('the externals file is read once: one that cannot be read is a refusal, also when only the Lean pass needs it', () => {
+    const { 'formal/trusted/Gaps.lean': _made, ...withoutTrusted } = HEAD_FILES;
+    const fx = layered({ head: withoutTrusted });
+    write(path.join(fx.repo, '.formalising', 'auto-fv', 'externals.json'), '{not json');
+    const result = checkTip(fx, { dump: DUMPS() });
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.json.code, 'run-state-unreadable');
+    assert.equal(JSON.parse(fs.readFileSync(result.json.receipt, 'utf8')).accepted, false);
+  });
+
   test('without a merged spec nothing is compared and no Lean program runs', () => {
     const fx = layered();
     const result = check(fx, { commit: fx.tip, oleans: OLEANS, noBase: true });
@@ -1864,6 +1915,19 @@ describe('real Lean: a statement that still reads the same but does not mean the
     const strengthened = realCheck(realProject({ ...REAL_HEAD, 'Fx/Trusted/Gaps.lean': `import Fx.Specs.Defs.Gaps\n\n${trusted('False')}` }));
     assert.equal(strengthened.status, 1, strengthened.stderr);
     assert.ok(strengthened.json.integrity.problems.some((p) => p.kind === 'trusted-axiom-unbound' && /asserts False/.test(p.detail)), strengthened.stderr);
+  });
+
+  // A command that already exists can generate an axiom and its docstring, so the new Trusted file shows no axiom
+  // for the text rules to tie (the command is in the merged spec already, so the axiom text in it is not an addition). Lean still binds it to its accepted record, and the receipt must say so.
+  test('an axiom generated by a command is bound by Lean, and the receipt names its record with a digest', async () => {
+    const { recordDigest } = await library();
+    const generator = 'import Lean\nimport Fx.Specs.Defs.Gaps\nopen Lean Elab Command\n\nelab "gen_gap" : command => do\n  let name := mkIdent `Fx.gap_add_spec\n  elabCommand (← `(command| /-- Accepted assumption, `gap-add`. -/ axiom $name : Gap))\n';
+    const files = { ...REAL_HEAD, 'Fx/Trusted/Gaps.lean': 'import Fx.Proofs.Gen\n\ngen_gap\n' };
+    const result = realCheck(realProject(files, { baseFiles: { 'Fx/Proofs/Gen.lean': generator } }));
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.integrity.ties, [], 'the text of the Trusted file has no axiom');
+    assert.deepEqual(result.json.integrity.semantic.bindings, [{ axiom: 'Fx.gap_add_spec', record: 'gap-add', proposition: 'Gap' }]);
+    assert.deepEqual(result.json.externals.records, [{ id: 'gap-add', sha256: recordDigest(record({ id: 'gap-add' })) }]);
   });
 
   // native_decide adds a generated axiom named after the theorem. The merged spec here proves foo_spec with it,
