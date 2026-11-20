@@ -935,6 +935,16 @@ describe('git configuration variables that the user trusted at init', () => {
       assert.equal(lib.recordHint(linked), w.commonDir);
     });
 
+    it('resolves the relative paths that a worktree made with --relative-paths writes, from a subfolder', () => {
+      const w = world();
+      const linked = path.join(w.dir, 'relative-linked');
+      const made = spawnSync('git', ['worktree', 'add', '-q', '--relative-paths', '-b', 'fvs/r', linked], { cwd: w.work, env: w.env, encoding: 'utf8' });
+      if (made.status !== 0) return; // This git has no --relative-paths; the absolute-path rows above cover it.
+      assert.ok(!path.isAbsolute(/^gitdir: (.+)$/m.exec(fs.readFileSync(path.join(linked, '.git'), 'utf8'))[1].trim()), 'the .git file holds a relative path');
+      fs.mkdirSync(path.join(linked, 'sub', 'deeper'), { recursive: true });
+      assert.equal(lib.recordHint(path.join(linked, 'sub', 'deeper')), w.commonDir);
+    });
+
     it('follows a .git file to a git directory that is kept apart from the work tree, and the push works from there', () => {
       const w = world({ skipRecord: true });
       const apart = path.join(w.dir, 'apart.git');

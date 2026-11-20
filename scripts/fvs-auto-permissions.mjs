@@ -276,10 +276,11 @@ function destinationState({ record, commonDir }) {
     return error.code === 'ENOENT' ? { file, status: 'missing' } : { file, status: 'unreadable', problem: error.message };
   }
   if (isDeepStrictEqual(existing, record)) return { file, status: 'matches', existing };
+  // Only a record that is valid in every field is compared further: a file can hold any JSON, such as null or a list.
   const changedVariables = differingVariables(existing, record);
-  const sameDestination = isDeepStrictEqual(withoutVariables(existing), withoutVariables(record));
-  if (sameDestination && changedVariables.length === 0 && recordProblem(existing) === null) return { file, status: 'matches', existing };
-  return { file, status: 'differs', existing, changedVariables, replaceable: sameDestination && recordProblem(existing) === null && changedVariables.length > 0 };
+  const sameDestination = recordProblem(existing) === null && isDeepStrictEqual(withoutVariables(existing), withoutVariables(record));
+  if (sameDestination && changedVariables.length === 0) return { file, status: 'matches', existing };
+  return { file, status: 'differs', existing, changedVariables, replaceable: sameDestination && changedVariables.length > 0 };
 }
 const withoutVariables = ({ trustedGitVariables, ...rest }) => rest;
 const changedNote = (state) => (state.changedVariables?.length ? ` The git variables to trust differ (${state.changedVariables.join(', ')}).` : '');

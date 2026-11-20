@@ -507,7 +507,7 @@ describe('the recorded destination', () => {
     assert.equal(done.record.url, `https://git.example.com/${REPO}.git`);
   });
 
-  it('never replaces a record that differs, and says how to resolve it', () => {
+  it('does not replace a record for another destination, and says how to resolve it', () => {
     recordDestination();
     spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
     const before = fs.readFileSync(recordFile(), 'utf8');
@@ -660,12 +660,20 @@ describe('the recorded destination', () => {
 
     it('a record that cannot be read or is not valid is a conflict, not a replace', () => {
       record(NOTE);
-      for (const text of ['{ not json', JSON.stringify({ schema: 'something-else' })]) {
+      const good = onDisk();
+      // JSON that is not an object (null, a list, a string) must be a conflict too, not a crash of the helper.
+      for (const text of ['{ not json', JSON.stringify({ schema: 'something-else' }), 'null', '[]', '"x"', '7']) {
         fs.writeFileSync(recordFile(), text);
         const refused = dest(MORE);
         assert.equal(refused.json.code, 'destination-conflict', text);
         assert.equal(fs.readFileSync(recordFile(), 'utf8'), text);
+        assert.ok(['differs', 'unreadable'].includes(run('plan', base(), { ...process.env, ...MORE }).json.pushDestination.status), text);
+        assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', 'git-push'), { ...process.env, ...MORE }).json.code, 'destination-not-recorded', text);
       }
+      // A record with the right destination and a broken variable map is not replaced either.
+      const broken = { ...good, trustedGitVariables: { GIT_CONFIG_COUNT: 'not-a-hash' } };
+      fs.writeFileSync(recordFile(), JSON.stringify(broken));
+      assert.equal(dest(MORE).json.code, 'destination-conflict');
     });
 
     it('a push selection in write-allowlist says which names differ from the record, and goes on when only a value differs', { skip: pushSkip }, () => {
