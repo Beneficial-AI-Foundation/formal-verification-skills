@@ -20,15 +20,15 @@
 //     [remote "<url>"] section names it, and git itself does not rewrite it.
 // Every git call that acts on the repository (the branch checks, the URL checks, the tip read and the push) names the git
 // directory and the work tree that were found and checked, so none of them finds a repository again from a directory.
-// Some calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
-// it; the same two again when git had to be asked with other git variables, or when the record confirms variables that the
-// first look did not use, so that the answer holds for the variables the push uses; and a read of the shared git directory
-// of the recorded project root.
+// Three calls do look for one: the first, which finds it; its round trip from the top of the work tree, which checks
+// it; and a read of the shared git directory of the recorded project root. The record itself is found before any of them,
+// from the files alone (`recordHint`), because it says which git variables to keep and git may need one to answer at all.
 // The push uses an explicit full refspec without `+`, --no-follow-tags and -c push.followTags=false,
 // --recurse-submodules=no, -c push.pushOption= (no push option from any configuration), --no-verify (no pre-push hook,
 // also one set with hook.<name>.event) and -c core.hooksPath=/dev/null (no hook in any hooks folder), --porcelain and
 // -c core.abbrev=no (full object ids), and every git call runs without the GIT_* variables listed in cleanEnvironment,
-// except the git configuration variables that the user confirmed at init (see the record). The result is appended to .formalising/auto-fv/pushes.jsonl of the recorded
+// except the git configuration variables whose names the user trusted at init (see the record): they are kept with
+// whatever value they have, and every call sees the same set. The result is appended to .formalising/auto-fv/pushes.jsonl of the recorded
 // project root. It names only object ids that the push reported: a new or up-to-date branch has none in git's summary.
 // When git does not report a result for the branch (a timeout, a lost connection), the outcome is `unknown`, and the
 // destination may have changed.
@@ -57,14 +57,14 @@ export const CONTRACT = {
   ],
   hardening: [
     'The push is made with --no-verify, which skips the pre-push hook whether it is a file in a hooks folder or is set in git configuration (hook.<name>.event), and core.hooksPath is set to /dev/null so that git finds no hook in any hooks folder. Your own pre-push checks do not run for it.',
-    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except those that were set when you confirmed the destination at init: init shows them with their values and records a hash of each, the command keeps exactly those, and it refuses to push when one of them is missing or has another value. The one exception is the first look at where the repository is, which finds the record: when git cannot answer without those variables (a sandbox that sets safe.directory), that read-only call is made again with the ones that are set. Every other git call is made with only the confirmed ones. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
+    'git runs without GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG, GIT_NAMESPACE and GIT_EXEC_PATH. It also runs without GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_COUNT, the GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs and GIT_CONFIG_PARAMETERS, except the ones whose names you trusted when you confirmed the destination at init. Init shows those names with their values. The command keeps each trusted name with whatever value it has when it runs, in every git call, and drops every other name. A trusted name that is not set is skipped, and a value that changed since init is not refused: the receipt marks it as changed. The configuration files that git reads by default stay, and so do your ssh, credential and transport settings that are not set through those variables.',
     'No push option is sent.',
   ],
   trusts: [
     'Your git setup, as for any push you run yourself.',
     'ssh and other transport wrappers (GIT_SSH_COMMAND, core.sshCommand, proxy and remote helpers): the command cannot tell where one of them sends the push.',
     'Credential helpers.',
-    'The git configuration variables that you confirmed at init, the way you trust your own git configuration files: whatever they set is used for the checks and for the push.',
+    'The git configuration variables whose names you trusted at init, the way you trust your own git configuration files: whatever value they have when the command runs is used for the checks and for the push.',
     'URL rewrite rules: a rule that is added or changed after the command checks and before it connects is not caught.',
     'The record file and FVS itself: anything that runs as your user can edit the record, the script and the permission rule, and so change where the command pushes or what it checks.',
     'The git program found on PATH.',
@@ -128,8 +128,8 @@ const placed = (where) => (where ? ['--git-dir', where.gitDir, '--work-tree', wh
 // happened to export. The configuration files that git reads by default stay (the files under HOME and XDG_CONFIG_HOME,
 // and the system file), and so do the user's own ssh, credential and transport settings that are not on this list:
 // GIT_SSH_COMMAND, GIT_SSH, GIT_ASKPASS, SSH_AUTH_SOCK, HOME, XDG_CONFIG_HOME, PATH and the rest. Settings that reach git
-// only through a removed variable are not used, unless the user confirmed that variable at init: a user whose only global
-// configuration is a file named by GIT_CONFIG_GLOBAL has that file ignored for these calls, unless init recorded the variable.
+// only through a removed variable are not used, unless the user trusted that variable by name at init: a user whose only
+// global configuration is a file named by GIT_CONFIG_GLOBAL has that file ignored for these calls, unless init recorded the name.
 const DROPPED = new Set(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_NAMESPACE', 'GIT_EXEC_PATH']);
 const DROPPED_PREFIXES = ['GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'];
@@ -186,29 +186,40 @@ export function rewriteProblem(where, url, env) {
 // ---- the record written at init -----------------------------------------------------------------------------
 
 // The record is the destination the owner confirmed: the URL itself, its host and OWNER/REPO, the namespaces the run
-// pushes under, the project root, and the shared git directory of that repository. It also holds the git configuration
-// variables the owner confirmed (`variables`, name to value): a hash of each value, in name order, and nothing when none
-// is set. The values are not written down, because a variable can carry a credential; a hash is enough to tell that a
-// value is still the one that was confirmed.
+// pushes under, the project root, and the shared git directory of that repository. It also holds the names of the git
+// configuration variables the owner chose to trust (`variables`, name to value at that moment) as `trustedGitVariables`:
+// each name with a hash of its value then, in name order, and nothing when none is trusted. The names are the trust:
+// the push command keeps each trusted name with whatever value it has when it runs. The hash is information only, it lets
+// the receipt say that a value changed since init, and it is never a reason to refuse. No value is written down, because
+// a variable can carry a credential.
 export function destinationRecord({ projectRoot, commonDir, url, host, repo, prefixes, variables = {} }) {
   const names = Object.keys(variables).sort();
   for (const name of names) if (!trustable(name)) throw new Error(`${name} cannot be trusted`);
   return {
     schema: RECORD_SCHEMA, schemaVersion: 1, projectRoot, commonDir, url, host, repo, prefixes: [...prefixes],
-    ...(names.length ? { gitConfigEnvironmentSha256: Object.fromEntries(names.map((name) => [name, sha256(variables[name])])) } : {}),
+    ...(names.length ? { trustedGitVariables: Object.fromEntries(names.map((name) => [name, sha256(variables[name])])) } : {}),
   };
 }
 
 const hashesOf = (record) => {
-  const found = record?.gitConfigEnvironmentSha256;
+  const found = record?.trustedGitVariables;
   return found !== null && typeof found === 'object' && !Array.isArray(found) ? found : {};
 };
 
-// The names of the confirmed git variables that differ between two records: added, removed or given another value.
+// The names of the trusted git variables that one record has and the other does not. A value that changed is not a difference.
 export function differingVariables(a, b) {
   const left = hashesOf(a);
   const right = hashesOf(b);
-  return [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((name) => left[name] !== right[name]).sort();
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((name) => Object.hasOwn(left, name) !== Object.hasOwn(right, name)).sort();
+}
+
+// What a push reports about the git variables, without any value or hash: for each trusted name whether its value is the
+// one that was confirmed (`same`), another value (`changed`) or not set; and the names that are set and not trusted,
+// which the push dropped.
+export function variableReport(record, env) {
+  const trusted = Object.fromEntries(Object.entries(hashesOf(record)).map(([name, hash]) => [name, !Object.hasOwn(env, name) ? 'not-set' : sha256(env[name]) === hash ? 'same' : 'changed']));
+  const dropped = Object.keys(trustableVariables(env)).filter((name) => !Object.hasOwn(trusted, name)).sort();
+  return { trusted, dropped };
 }
 
 export function checkPrefixShape(prefix) {
@@ -228,12 +239,12 @@ export function recordProblem(record) {
   if (!/^[A-Za-z0-9.-]+$/.test(String(record.host))) return 'has no usable host';
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/.test(String(record.repo))) return 'has no usable OWNER/REPO';
   if (!Array.isArray(record.prefixes) || record.prefixes.length === 0) return 'names no branch namespace';
-  if ('gitConfigEnvironmentSha256' in record) {
-    const hashes = record.gitConfigEnvironmentSha256;
-    if (hashes === null || typeof hashes !== 'object' || Array.isArray(hashes)) return 'has a gitConfigEnvironmentSha256 that is not a map from variable names to hashes';
+  if ('trustedGitVariables' in record) {
+    const hashes = record.trustedGitVariables;
+    if (hashes === null || typeof hashes !== 'object' || Array.isArray(hashes)) return 'has a trustedGitVariables that is not a map from variable names to hashes';
     for (const [name, hash] of Object.entries(hashes)) {
-      if (!trustable(name)) return `has a gitConfigEnvironmentSha256 entry for ${JSON.stringify(name)}, a variable that cannot be trusted`;
-      if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return `has no SHA-256 hash for ${name} in gitConfigEnvironmentSha256`;
+      if (!trustable(name)) return `has a trustedGitVariables entry for ${JSON.stringify(name)}, a variable that cannot be trusted`;
+      if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return `has no SHA-256 hash for ${name} in trustedGitVariables`;
     }
   }
   for (const prefix of record.prefixes) { const bad = checkPrefixShape(prefix); if (bad) return `has the branch namespace ${JSON.stringify(prefix)}, which ${bad}`; }
@@ -255,7 +266,7 @@ const refuse = (code, message, details) => { throw new Refuse(code, message, det
 // the permission check can report a refusal in its own words. The URL must name the agreed host and repository
 // (every fetch and push URL of the remote is checked) and no rewrite rule may apply to it, because the push command
 // refuses a destination that a rule would rewrite. The git configuration variables that are set in `env` are the ones
-// the record will ask the user to confirm (`variables`, with their values, for the preview), so these checks run with them,
+// the record will ask the user to trust (`variables`, with their values, for the preview), so these checks run with them,
 // as the push will.
 export function initDestination(root, remote, repo, host, prefixes, env = process.env) {
   const variables = trustableVariables(env);
@@ -320,19 +331,36 @@ export function readRecord(commonDir) {
   return record;
 }
 
-// The git configuration variables that init recorded, which must still be set to the values the user confirmed. Returns
-// their names, or refuses and names each one that is missing or has another value, never a value. The record is not
-// replaced from here: to accept a change, the user deletes the record and confirms the destination again.
-export function confirmedVariables(record, env, commonDir) {
-  const problems = [];
-  for (const [name, hash] of Object.entries(hashesOf(record))) {
-    if (!Object.hasOwn(env, name)) problems.push(`${name} is not set now`);
-    else if (sha256(env[name]) !== hash) problems.push(`${name} has a different value`);
+// Where the record of this repository is, found from the files alone, before any git call. The record names the git
+// variables the user trusts, and git may need one of them to answer at all (safe.directory in a sandbox), so git cannot
+// be the one to find it. From the working directory it goes up to the first `.git` entry, as git does: a folder is the git
+// directory, a file names it (`gitdir:`), and a `commondir` file inside that names the shared git directory. It is a
+// hint and only a hint: `run` refuses unless git, started with the trusted variables, reports this very shared directory.
+export function recordHint(cwd) {
+  const none = () => refuse('not-a-repository', `${cwd} is not inside a git work tree`);
+  let dir;
+  try { dir = fs.realpathSync.native(cwd); } catch { none(); }
+  for (;;) {
+    const entry = path.join(dir, '.git');
+    if (fs.existsSync(entry)) {
+      try {
+        let gitDir = entry;
+        if (!fs.statSync(entry).isDirectory()) {
+          const named = /^gitdir: (.+)$/m.exec(fs.readFileSync(entry, 'utf8'));
+          if (!named) none();
+          gitDir = path.resolve(dir, named[1].trim());
+        }
+        const link = path.join(gitDir, 'commondir');
+        return fs.realpathSync.native(fs.existsSync(link) ? path.resolve(gitDir, fs.readFileSync(link, 'utf8').trim()) : gitDir);
+      } catch (error) {
+        if (error instanceof Refuse) throw error;
+        none();
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) none();
+    dir = parent;
   }
-  if (problems.length) {
-    refuse('git-config-changed', `the git variables that were confirmed at init are not the same now (${problems.join('; ')}). Nothing was pushed. If the change is on purpose, delete ${path.join(commonDir, RECORD_NAME)} and run the destination step of /fvs:auto-init again, and confirm the variables as they are now`);
-  }
-  return Object.keys(hashesOf(record));
 }
 
 // The repository the command runs in must be the one the destination was recorded for. The comparison is the shared git
@@ -408,33 +436,21 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
   try {
     if (argv.length !== 2 || argv[0] !== '--branch' || !argv[1] || argv[1].startsWith('-')) refuse('usage', `${USAGE}; no other argument is accepted`);
     const branch = argv[1];
-    // The record says which git configuration variables the user confirmed, and it is found through git, which may need one
-    // of those variables to answer at all (safe.directory in a sandbox). So git is asked where the repository is without
-    // any of them first, and only when it cannot answer is that read-only call made again with the variables that are set.
-    // The answer is used for nothing but finding the record. When the variables it was found with are not exactly the ones
-    // that the record confirms, git is asked again with only the confirmed ones, and every later call uses them too.
-    const present = Object.keys(trustableVariables(env));
-    let used = [];
-    let first;
-    try { first = locate(cwd, env); } catch (error) {
-      if (!(error instanceof Refuse) || error.code !== 'not-a-repository' || present.length === 0) throw error;
-      used = present;
-      first = locate(cwd, withTrusted(env, present));
-    }
-    const record = readRecord(first.commonDir);
-    const confirmed = confirmedVariables(record, env, first.commonDir);
-    const gitEnv = withTrusted(env, confirmed);
-    let found = first;
-    if (confirmed.length !== used.length) {
-      try { found = locate(cwd, gitEnv); } catch (error) {
-        if (!(error instanceof Refuse)) throw error;
-        const unconfirmed = present.filter((name) => !confirmed.includes(name)).sort();
-        refuse(error.code, unconfirmed.length ? `${error.message}; this check ran without the git variables that init did not record (${unconfirmed.join(', ')})` : error.message);
+    // The record says which git variables the user trusts, so it is read before git is run (see `recordHint`). Every git call
+    // after that, the first one included, runs with the same set: the trusted names that are set, with the values they
+    // have now, and no other name of the list. A trusted name that is not set is simply not there.
+    const hinted = recordHint(cwd);
+    const record = readRecord(hinted);
+    const report = variableReport(record, env);
+    const gitEnv = withTrusted(env, Object.keys(report.trusted));
+    let found;
+    try { found = locate(cwd, gitEnv); } catch (error) {
+      if (error instanceof Refuse && error.code === 'not-a-repository' && report.dropped.length) {
+        refuse(error.code, `${error.message}. These git variables are set and are not trusted, so this check ran without them: ${report.dropped.join(', ')}. If git needs one of them, run the destination step of /fvs:auto-init again and trust it`);
       }
-      if (found.gitDir !== first.gitDir || found.commonDir !== first.commonDir || found.top !== first.top) {
-        refuse('wrong-repository', `with only the confirmed git variables git finds ${found.gitDir}, not ${first.gitDir} as it did first; nothing was pushed`);
-      }
+      throw error;
     }
+    if (found.commonDir !== hinted) refuse('wrong-repository', `the record was read from ${hinted}, but git finds the shared git directory ${found.commonDir}; nothing was pushed`);
     const wrongPlace = repositoryProblem(record, found, gitEnv);
     if (wrongPlace) refuse('wrong-repository', wrongPlace);
     const wrongBranch = branchProblem(found, branch, record.prefixes, gitEnv);
@@ -459,7 +475,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, now = () => 
     // lost connection, a signal, no line for the ref) leaves the outcome open: the destination may have taken the update.
     const result = accepted ? status : seen.flag === '!' ? 'failed' : 'unknown';
     const entry = {
-      at: now().toISOString(), branch, destination: record.url, repositoryRoot: found.top, commonDir: found.commonDir,
+      at: now().toISOString(), branch, destination: record.url, repositoryRoot: found.top, commonDir: found.commonDir, gitVariables: report,
       result, porcelainFlag: seen.flag, porcelain: seen.line, to: seen.to,
       // Only ids that the push itself reported. A new branch and an up-to-date branch carry none in git's summary, and the
       // tip read before the push is not an id of what was sent: the branch can move between the read and the push.
