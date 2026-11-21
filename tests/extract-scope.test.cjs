@@ -221,6 +221,18 @@ describe('the scope the crates command shows', () => {
     assert.equal(run(ws, ['crates', '--out', unknown.out, '--release', RELEASE]).result.scope.kind, 'unknown');
   });
 
+  it('shows the scope of a plain export of a source commit: no .git, no configuration, the release elsewhere', () => {
+    const ws = workspace();
+    const exported = path.join(ws.root, 'export');
+    for (const name of ['Cargo.toml', 'Cargo.lock', 'app', 'lib']) fs.cpSync(path.join(ws.project, name), path.join(exported, name), { recursive: true });
+    assert.deepEqual(fs.readdirSync(exported).sort(), ['Cargo.lock', 'Cargo.toml', 'app', 'lib'], 'no .git, no .formalising, no release in the export');
+    const release = path.join(ws.project, RELEASE);
+    const shown = run(ws, ['crates', '--project-root', exported, '--release', release]);
+    assert.equal(shown.status, 0, shown.stdout);
+    assert.deepEqual(shown.result.scope, { kind: 'multi-crate', basis: 'cargo', libraryCrates: ['toy_app', 'toy_lib'] });
+    assert.deepEqual(fs.readdirSync(exported).sort(), ['Cargo.lock', 'Cargo.toml', 'app', 'lib'], 'the export is not touched');
+  });
+
   it('shows a lone crate as single-crate, with its one library crate', () => {
     const ws = solo();
     const checkout = run(ws, ['crates', '--project-root', ws.project, '--release', RELEASE]);
