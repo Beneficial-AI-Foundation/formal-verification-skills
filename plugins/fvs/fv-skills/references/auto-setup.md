@@ -538,9 +538,9 @@ context is compacted.
 
 Orca is another environment the auto track can run in. FVS needs nothing from Orca beyond the capabilities
 in `auto-seats.md`, and checks for none. Everything in this section is an example, not tested: FVS records
-no run in Orca, and these commands are read from Orca's own orchestration guide (`orca skills get
-orchestration`); they were not run for this guide. Run `orca <command> --help` on your version: it is the
-authority.
+no run in Orca, and these commands are read from Orca's own guides (`orca skills get orchestration` and
+`orca skills get orca-cli`) and from `orca orchestration worker-start --help`; they were not run for this
+guide. Run `orca <command> --help` on your version: it is the authority.
 
 **Worktrees.** Orca gives each worker its own git worktree. `orca worktree show
 --worktree SELECTOR --json` and `orca worktree ps --json` give each path. A project-level FVS install and
@@ -562,9 +562,11 @@ names no interrupt command, so redirect a worker by stopping it and starting a r
 
 **Reviewer.** The Orca guide names no built-in pull request reviewer. Check your version.
 
-**Sandboxes.** A worker in a container sees only that container's files. Install FVS there ("Install FVS
-where the agents run" above), and see `auto-seats.md`, "Reports", for what to do when the orchestrator
-cannot read or write a worker's worktree.
+**Sandboxes.** A layout that keeps the shared filesystem the workflows assume is one docker sandbox per
+project, with the orchestrator and all its workers in it and each worker in its own worktree. Install FVS
+in the sandbox's home folder with the global install ("Install FVS where the agents run" above), so every
+worktree in the sandbox finds it. If your workers run apart from the orchestrator's filesystem, see
+`auto-seats.md`, "Reports".
 
 ## Codex trust
 

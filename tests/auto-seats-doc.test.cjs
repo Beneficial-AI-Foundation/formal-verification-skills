@@ -131,12 +131,13 @@ describe('seat reference', () => {
     assert.doesNotMatch(flat.slice(0, flat.indexOf('## What the orchestrator needs')), /Agent Orchestrator session/, 'the seats are defined without naming an environment');
   });
 
-  it('says what a worker returns when the orchestrator cannot read or write its worktree', () => {
+  it('keeps the shared filesystem as the normal case and says what a worker returns where it does not hold', () => {
     const flat = text.replace(/\s+/g, ' ');
     assert.match(flat, /A report is a pointer, not evidence/);
     assert.match(flat, /Acceptance never depends on a report: it comes from the build-check receipt on the published head/);
-    assert.match(flat, /If the orchestrator cannot read a worker's worktree \(for example a worker in a container\), the worker returns the text the orchestrator needs in its final reply/);
-    assert.match(flat, /If the orchestrator cannot write into a worker's worktree, the worker fetches its own Lake packages/);
+    assert.match(flat, /The orchestrator and its workers normally share a filesystem, so the orchestrator reads the evidence in a worker's worktree directly/);
+    assert.match(flat, /Where they do not, the worker returns the text the orchestrator needs in its final reply/);
+    assert.match(flat, /if the orchestrator cannot write into a worker's worktree, the worker fetches its own Lake packages/);
   });
 
   it('is honest that the strict lane needs the Agent Orchestrator CLI in 3.0.0-rc3', () => {

@@ -153,7 +153,7 @@ describe('auto-setup reference: prerequisites', () => {
     const named = Object.keys(VERSION_CHECKS)
       .filter((tool) => new RegExp(`(?<![\\w-])${tool}(?![\\w-])`, 'i').test(text));
     // The profile text must exercise the whole fresh-host path, not a corner.
-    for (const tool of ['ao', 'rustup', 'cargo', 'rustc', 'elan', 'lake', 'aeneas', 'charon', 'probe-aeneas']) {
+    for (const tool of ['rustup', 'cargo', 'rustc', 'elan', 'lake', 'aeneas', 'charon', 'probe-aeneas']) {
       assert.ok(named.includes(tool), `failure messages no longer name ${tool}`);
     }
     for (const tool of named) assert.ok(raw.includes(`\`${VERSION_CHECKS[tool]}\``), `${tool}: ${VERSION_CHECKS[tool]}`);

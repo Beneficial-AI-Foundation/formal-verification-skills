@@ -56,8 +56,8 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
    copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
    and a dependency build; never share one packages folder between worktrees, because concurrent builds
-   would write the same package outputs. When you cannot write into a worker's worktree (for example a
-   worker in a container), tell the worker to fetch its own packages with `lake exe cache get` and a
+   would write the same package outputs. If your environment does not let you write into a
+   worker's worktree, tell the worker to fetch its own packages with `lake exe cache get` and a
    dependency build. Authors have no recorded state in their worktrees, so only you
    run the engine's steps, in the project checkout, after the authors' files are on the branch.
 
@@ -258,9 +258,8 @@ node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --
 `PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
 inside the project, named relative to its root. Reviewers write in their own worktrees, so copy each
 report into the project checkout yourself, under `.formalising/` for example: that folder is never
-committed, so the report stays out of the spec pull request. When you cannot read a reviewer's worktree
-(for example a reviewer in a container), have the reviewer return the report text in its final reply and
-save it yourself. The IDs are the items' Rust paths without spaces, for
+committed, so the report stays out of the spec pull request. If your environment does not let you read a
+reviewer's worktree, have the reviewer return the report text in its final reply and save it yourself. The IDs are the items' Rust paths without spaces, for
 example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
 stores a hash of both files. A later row for the same spec file is the current one, and a round past the
 third is recorded with a warning.

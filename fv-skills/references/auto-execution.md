@@ -164,7 +164,7 @@ claim. The evidence named here is what the orchestrator keeps.
 
 ## Network and runner support
 
-Use stock AO on the user's local or cloud host. Research, lemma/docs search and dependency acquisition
+Use your development environment on the user's local or cloud host. Research, lemma/docs search and dependency acquisition
 are network-enabled through configured tools/providers, permissions and selected budgets. Retain pins,
 origins and privacy; freeze the exact inputs used by checking. A stable-snapshot check's anti-fetch and
 mutation checks do not forbid networking for the full project run. Offline Dalek/qualification cases

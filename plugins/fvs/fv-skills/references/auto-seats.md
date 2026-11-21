@@ -25,7 +25,7 @@ The orchestrator session uses these capabilities of the development environment 
 | Interrupt a busy worker | `ao send --session ID --steer --message TEXT` | No interrupt command found: a message arrives when the worker's current turn ends |
 | Read a worker's report | the worker's `ao report` note, or its terminal output | the worker ends with `worker_done` and the orchestrator is woken; `orca agent read ID --json` reads its output |
 | Find a worker's worktree | `ao session get` | `orca worktree show --worktree SELECTOR --json` |
-| Stop a worker | `ao kill` | not checked: see the Orca guide on recovery and cleanup |
+| Stop a worker | `ao session kill ID` | not checked: see the Orca guide on recovery and cleanup |
 | Set the base of new worktrees | the project's default branch | `--base-branch REF`, or `orca repo set-base-ref --repo id:REPO --ref origin/BRANCH` |
 
 Beads (`bd`) is optional: only the project memory (`auto-memory.md`) uses it, and only when the agreement records memory.
@@ -128,10 +128,11 @@ rules". Put them in each worker brief.
   in a file in the worker's worktree or in a commit on the branch pushed with the FVS push command. A
   report channel can have a short length limit (the Agent Orchestrator `ao report` note does), so keep
   the report to the result and the evidence path. Acceptance never depends on a report: it comes from
-  the build-check receipt on the published head. If the orchestrator cannot read a worker's worktree
-  (for example a worker in a container), the worker returns the text the orchestrator needs in its
-  final reply, and the orchestrator saves it where the workflow says. If the orchestrator cannot write
-  into a worker's worktree, the worker fetches its own Lake packages (`auto-top-specs.md`, "Prepare the working branch").
+  the build-check receipt on the published head. The orchestrator and its workers normally share a
+  filesystem, so the orchestrator reads the evidence in a worker's worktree directly. Where they do not,
+  the worker returns the text the orchestrator needs in its final reply, and the orchestrator saves it
+  where the workflow says; and if the orchestrator cannot write into a worker's worktree, the worker
+  fetches its own Lake packages (`auto-top-specs.md`, "Prepare the working branch").
 - **Keep the ownership map and the three commits.** The orchestrator holds the map of items, owners
   and files, and the status line with the accepted, the published and the recorded commit
   (`auto-execution.md`, "Worker brief rules"). A worker never carries them across a handoff on its own.
