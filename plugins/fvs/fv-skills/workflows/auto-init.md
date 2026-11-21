@@ -353,9 +353,8 @@ Otherwise ask the owner whether to run the check or skip it. A skip is recorded 
 
 **Tell the owner first**, in these words or close to them: some of the next commands may stop and ask you
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts
-to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
-under `.formalising/`, compile it (only when the project's dependencies are already downloaded), read pull
-requests, fetch, and run the push command with a branch name that cannot exist, which it refuses before it
+to GitHub or pushes anything. They write one scratch file under `.formalising/`, compile it (only when the
+project's dependencies are already downloaded), read pull requests, fetch, and run the push command with a branch name that cannot exist, which it refuses before it
 contacts anything. Say also that "low-risk" is not "inert": Lake evaluates the project's own lakefile and can write
 build caches, and git runs any hook configured for a fetch.
 
@@ -368,8 +367,7 @@ plan has no probe (Lake would download a missing dependency): do not ask about i
 record it as `unknown`.
 
 **You cannot see prompts**, so ask. Two multi-select questions with at most four options each, each with a
-"none of these" option: first `worker-message`, `author-edit`, `lake-build`; then `gh-read`, `git-read`,
-`git-push`. The owner's answer is the result. Write it to a temporary file outside the project and record it:
+"none of these" option: first `author-edit`, `lake-build`; then `gh-read`, `git-read`, `git-push`. The owner's answer is the result. Write it to a temporary file outside the project and record it:
 
 ```bash
 node "$PERM" record --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs --input "$ANSWER"
@@ -401,7 +399,7 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    they appear. Codex gets the same rule as a prefix rule for the program and `--branch`: say that it cannot
    tell `fvs/work` from `main`, and that the command refuses a name outside the namespace.
 2. Run `write-allowlist` without `--confirm` for the steps the owner agreed to, for example
-   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`
+   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps lake-build,git-push`
    (add `--host HOST` when the repository is not on `github.com`). It writes nothing and refuses with
    `confirmation-required`, printing the file, its real path (`resolvedPath`, `viaLink`), its `gitStatus` and
    where it applies (`appliesTo`), the exact rules, for `git-push` the push command and the recorded destination
