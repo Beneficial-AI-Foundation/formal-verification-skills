@@ -172,14 +172,23 @@ describe('fvs-auto profile verdicts', () => {
   });
 
   it('reports an absent required tool as missing, with the manual step', async () => {
-    const result = await profileOf(path.join(FIXTURES, 'fresh'), { bin: binWithout('lake', 'ao') });
+    const result = await profileOf(path.join(FIXTURES, 'fresh'), { bin: binWithout('lake') });
     const lean = item(result, 'lean');
     assert.equal(lean.verdict, 'missing');
     assert.match(lean.reason, /lake is not on PATH/);
     assert.match(lean.nextStep, /Install elan \(https:\/\/github\.com\/leanprover\/elan\)/);
-    const ao = item(result, 'ao');
-    assert.equal(ao.verdict, 'missing');
-    assert.match(ao.nextStep, /Install Agent Orchestrator/);
+  });
+
+  it('checks no development environment: the same items with and without an ao on PATH', async () => {
+    const fresh = path.join(FIXTURES, 'fresh');
+    const withAo = await profileOf(fresh);
+    const withoutAo = await profileOf(fresh, { bin: binWithout('ao') });
+    assert.deepEqual(withAo.items.map((entry) => entry.id), ['host', 'rust', 'lean', 'aeneas', 'probe']);
+    // The stub directories differ, so tool paths in the evidence differ; the verdicts and next steps must not.
+    const summary = (result) => result.items.map(({ id, verdict, nextStep }) => ({ id, verdict, nextStep }));
+    assert.deepEqual(summary(withoutAo), summary(withAo));
+    assert.deepEqual(withoutAo.readiness.map(({ stage, status }) => ({ stage, status })), withAo.readiness.map(({ stage, status }) => ({ stage, status })));
+    for (const entry of withoutAo.items) assert.doesNotMatch(`${entry.reason} ${entry.nextStep}`, /Agent Orchestrator|\bao\b/, entry.id);
   });
 
   it('reports the present but untested pilot tuple as available but unverified, naming the tested tuple', async () => {
@@ -568,10 +577,9 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
   before(async () => { ({ readiness } = await import(pathToFileURL(SCRIPT).href)); });
 
   const ids = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean'];
-  const profileWith = ({ ao = 'available-but-unverified', lean = 'available-but-unverified', probes = {} } = {}) => ({
+  const profileWith = ({ lean = 'available-but-unverified', probes = {} } = {}) => ({
     items: [
-      { id: 'ao', verdict: ao, nextStep: 'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.' },
-      { id: 'lean', verdict: lean, nextStep: 'None required now.' },
+      { id: 'lean', verdict: lean, nextStep: 'Install elan, then rerun the profile.' },
     ],
     probes: ids.map((id) => ({ id, status: 'qualified', ...(probes[id] ?? {}) })),
   });
@@ -616,8 +624,8 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     const partial = topSpecs({ ...rc1, probes: probes.filter((entry) => entry.id !== 'probe-lean') });
     assert.equal(partial.status, 'ready-reduced');
     assert.deepEqual(partial.missing, ['probe-lean']);
-    const noAo = topSpecs({ ...rc1, items: rc1.items.map((entry) => entry.id === 'ao' ? { ...entry, verdict: 'missing' } : entry) });
-    assert.equal(noAo.status, 'no-route', 'a missing AO is still no route when the probes were not recorded');
+    const noLean = topSpecs({ ...rc1, items: rc1.items.map((entry) => entry.id === 'lean' ? { ...entry, verdict: 'missing' } : entry) });
+    assert.equal(noLean.status, 'no-route', 'a missing Lean is still no route when the probes were not recorded');
   });
 
   it('labels present but unqualified probes alongside a reduced route', () => {
@@ -626,19 +634,28 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.match(stage.line, /scip not qualified for this toolchain tuple: output labelled unverified\./);
   });
 
-  it('has no route when AO is missing, even if only probes are missing besides', () => {
-    const stage = topSpecs(profileWith({ ao: 'missing', probes: { 'probe-lean': { status: 'missing' } } }));
+  it('has no route when Lean is missing, even if only probes are missing besides', () => {
+    const stage = topSpecs(profileWith({ lean: 'missing', probes: { 'probe-lean': { status: 'missing' } } }));
     assert.equal(stage.status, 'no-route');
-    assert.deepEqual(stage.missing, ['ao', 'probe-lean']);
-    assert.equal(stage.firstMissing.need, 'ao');
+    assert.deepEqual(stage.missing, ['lean', 'probe-lean']);
+    assert.equal(stage.firstMissing.need, 'lean');
   });
 
-  it('has no route without ao, using the ao item next step and naming the refresh', () => {
-    const stage = topSpecs(profileWith({ ao: 'missing' }));
+  it('has no route without Lean, using the lean item next step and naming the refresh', () => {
+    const stage = topSpecs(profileWith({ lean: 'missing' }));
     assert.equal(stage.status, 'no-route');
-    assert.equal(stage.firstMissing.need, 'ao');
+    assert.equal(stage.firstMissing.need, 'lean');
     assert.equal(stage.firstMissing.step,
-      'install Agent Orchestrator and put its ao CLI on PATH, then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed');
+      'install elan, then rerun /fvs:auto-init with the recorded choices so the recorded profile is refreshed');
+  });
+
+  it('ignores an ao item recorded by an earlier build: it neither blocks a stage nor appears in a stage line', () => {
+    const recorded = profileWith();
+    recorded.items.unshift({ id: 'ao', verdict: 'missing', nextStep: 'Install it, then rerun the profile.' });
+    for (const entry of readiness(recorded)) {
+      assert.equal(entry.status, 'full', entry.stage);
+      assert.doesNotMatch(entry.line, /\bao\b/, entry.stage);
+    }
   });
 
   it('a refused path override leaves the helpers not checked and keeps the reason', async () => {
@@ -737,7 +754,7 @@ describe('fvs-auto readiness: what each stage can do, computed from a profile', 
     assert.equal(legacy.status, 'ready-reduced');
     assert.equal(legacy.firstMissing.supplier, 'agent');
     const none = topSpecs(undefined);
-    assert.equal(none.status, 'no-route', 'no profile at all has no AO or Lean');
+    assert.equal(none.status, 'no-route', 'no profile at all has no Lean');
     assert.notEqual(none.firstMissing, null);
   });
 });

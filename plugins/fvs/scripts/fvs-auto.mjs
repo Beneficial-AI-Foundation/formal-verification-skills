@@ -159,14 +159,15 @@ function probeUsable(id, bin, root, selected) {
   return ['unverified-blocked', `the Lean graph step accepts only probe-lean ${plain.join(' or ')} output${withConstants.length ? `, or ${withConstants.join(' or ')} output with a version 2 constants record,` : ''} and refuses other versions; this probe-lean reports ${JSON.stringify(version)}`];
 }
 
-// What each stage needs on this engine. The AO controller launches spec, review
+// What each stage needs on this engine. The orchestrator launches spec, review
 // and proof work only on a closure plan the registry accepts: a verified Lean
 // graph from probe-lean, and an identity confirmed by probe-aeneas and probe-rust
-// (which needs scip and rust-analyzer). Without AO or Lean a stage has no route;
+// (which needs scip and rust-analyzer). Without Lean a stage has no route;
 // without a probe it runs reduced, labelled with what that probe's output would
 // have added. Probes that are present but not qualified for this tuple give a
-// route whose output is labelled unverified.
-const STAGE_NEEDS = ['ao', 'lean', ...Object.keys(PROBE_LOSSES)];
+// route whose output is labelled unverified. The profile checks no development
+// environment: which one starts the workers is the user's choice.
+const STAGE_NEEDS = ['lean', ...Object.keys(PROBE_LOSSES)];
 const STAGES = { 'auto-top-specs': STAGE_NEEDS, 'auto-execute': STAGE_NEEDS };
 
 // The recorded profile changes only when init-state runs again (same choices
@@ -194,7 +195,7 @@ function stageGap(need, items, probes) {
 // qualified), ready-unverified (every probe present and usable, some not
 // qualified), ready-reduced (only recorded probes are missing, not checked or
 // unusable, or absent from a profile recorded before probes were checked: the
-// stage runs without their output, labelled reduced), or no-route (AO or Lean
+// stage runs without their output, labelled reduced), or no-route (Lean
 // missing), naming the first missing need and who supplies it.
 const REDUCED_PROBE = ['missing', 'not-checked', 'unverified-blocked'];
 export function readiness(profileResult) {
@@ -291,16 +292,6 @@ function hostItem(platform) {
     `${platform} has recorded confined-run evidence only for the probe-aeneas inventory operation (${tested.join(', ')}); no other auto-track operation is validated on any host`,
     'None for the host; the probe item states what is tested for this project.',
     evidence);
-}
-
-function aoItem() {
-  const found = which('ao');
-  if (!found) {
-    return item('ao', 'missing', 'the ao CLI is not on PATH; the auto commands require Agent Orchestrator',
-      'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.', { path: null });
-  }
-  return item('ao', 'available-but-unverified', `ao is on PATH at ${found}; FVS records no tested Agent Orchestrator version`,
-    'None required now.', { path: found });
 }
 
 // The toolchain as the crate directory sees it: rustup reads a pin from the
@@ -676,7 +667,6 @@ export function profile({ projectRoot, platform = hostTarget() }) {
     platform,
     items: [
       hostItem(platform),
-      aoItem(),
       rustItem(root, resolver.provenance.rustProject),
       leanItem(root),
       aeneasItem(root, platform, resolver.provenance),
@@ -2213,10 +2203,13 @@ function choiceChanges(recorded, requested) {
     .map((field) => ({ field, recorded: before[field], requested: after[field] }));
 }
 
-// Verdicts that stop auto-init. Probes are optional, so neither the probe item
-// nor the host it was tested on ever stops it. A provenance conflict is a warning:
-// the extraction stops only when its recorded build fails.
-const blocks = (entry) => !['host', 'probe'].includes(entry.id)
+// Verdicts that stop auto-init. Only the toolchain items stop it: probes are
+// optional, so neither the probe item nor the host it was tested on ever stops it.
+// A profile recorded by an earlier build may hold an item for a tool that the
+// profile no longer checks; such an item never stops setup. A provenance conflict
+// is a warning: the extraction stops only when its recorded build fails.
+const TOOLCHAIN_ITEMS = ['rust', 'lean', 'aeneas'];
+const blocks = (entry) => TOOLCHAIN_ITEMS.includes(entry.id)
   && ['incompatible', 'unsupported-platform', 'missing'].includes(entry.verdict);
 
 // What stops setup for a recorded state. A missing Aeneas stops a first setup, but
@@ -2292,7 +2285,7 @@ const PUSH_STEP = 'push with the FVS push command (`node <FVS scripts folder>/fv
 
 // The phase, the next action and its warnings, derived together so they never
 // disagree. After a successful extraction the next step is the spec phase: the
-// orchestrator spawns stock AO workers and runs the engine steps itself, so no
+// orchestrator starts workers and runs the engine steps itself, so no
 // execution grant, stage profile or permission install is asked for. A missing
 // or outdated agreement and a reduced or unverified stage are warnings only.
 function progress(root, state, specs = null) {
@@ -2334,7 +2327,7 @@ function progress(root, state, specs = null) {
     const proofMerge = proofs.at(-1)?.merged ? proofs.at(-1) : null;
     if (!proofPr) {
       return { phase: 'proofs', warnings,
-        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + stitchedWork(state.extraction.run) + suffix };
+        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the orchestrator session for the proof phase: workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + stitchedWork(state.extraction.run) + suffix };
     }
     const receipt = buildCheckReceipt(root, proofPr.head);
     // An accepting receipt counts only when the statements were held to the recorded spec merge: a
@@ -2387,7 +2380,7 @@ function progress(root, state, specs = null) {
   return { phase: 'specs', warnings,
     nextAction: (specPr
       ? `The draft spec PR ${specPr.url} is recorded: the owner reviews and merges it. After the merge, read the merge commit with gh pr view and record it with record-pr --kind spec --merged --merge-commit SHA. A spec refactor is another review round recorded with record-spec, then another record-pr.`
-      : 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.')
+      : 'Run /fvs:auto-top-specs from the orchestrator session for the spec phase: the orchestrator lists the public API items in scope, starts workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.')
       + stitchedWork(state.extraction.run) + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 

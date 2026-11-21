@@ -150,7 +150,7 @@ describe('a single-crate run records and reads what it always did', () => {
     const read = cli('read-state', '--project-root', root);
     assert.deepEqual(keys(read.json), READ_STATE_KEYS);
     assert.equal(read.json.phase, 'specs');
-    assert.match(read.json.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase/);
+    assert.match(read.json.nextAction, /^Run \/fvs:auto-top-specs from the orchestrator session for the spec phase/);
     assert.deepEqual(keys(read.json.state), STATE_KEYS);
 
     const { extraction } = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));

@@ -141,7 +141,7 @@ describe('auto-init setup state', () => {
     assert.equal(state.schema, 'fvs/auto-state');
     assert.equal(state.schemaVersion, 1);
     assert.equal(state.profile.schema, 'fvs/auto-profile');
-    assert.deepEqual(state.profile.items.map((item) => item.id), ['host', 'ao', 'rust', 'lean', 'aeneas', 'probe']);
+    assert.deepEqual(state.profile.items.map((item) => item.id), ['host', 'rust', 'lean', 'aeneas', 'probe']);
     assert.deepEqual(state.choices.source, CHOICES.source);
     assert.equal(state.choices.scope, CHOICES.scope);
     assert.deepEqual(state.choices.limits, { nodeHours: 2, workers: 3, wallClockHours: 40 });
@@ -225,13 +225,29 @@ describe('auto-init setup state', () => {
     assert.equal(fs.existsSync(stateFile(root)), false);
   });
 
-  it('a host without the ao CLI stops with the profile next step and writes nothing', () => {
+  it('a host without an ao CLI is not stopped: the setup is recorded with no item for any development environment', () => {
     const root = project();
     const result = init(root, CHOICES, { bin: binWithout('ao') });
-    assert.equal(result.code, 'profile-blocked');
-    assert.deepEqual(result.blocking.map((item) => item.id), ['ao']);
-    assert.match(result.blocking[0].nextStep, /Install Agent Orchestrator/);
-    assert.equal(fs.existsSync(stateFile(root)), false);
+    assert.equal(result.code, 'created', JSON.stringify(result));
+    const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
+    assert.deepEqual(state.profile.items.map((item) => item.id), ['host', 'rust', 'lean', 'aeneas', 'probe']);
+    const view = auto.readState({ projectRoot: root });
+    assert.equal(view.code, 'ok');
+    assert.equal(view.phase, 'extract');
+    assert.doesNotMatch(view.nextAction, /^Setup is blocked/);
+  });
+
+  it('a profile recorded with an ao item that is missing never stops setup', () => {
+    const root = project();
+    init(root);
+    const file = stateFile(root);
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    state.profile.items.splice(1, 0, { id: 'ao', verdict: 'missing', reason: 'recorded by an earlier build', nextStep: 'Install it.', evidence: { path: null } });
+    fs.writeFileSync(file, JSON.stringify(state));
+    const view = auto.readState({ projectRoot: root });
+    assert.equal(view.code, 'ok');
+    assert.doesNotMatch(view.nextAction, /^Setup is blocked/);
+    assert.equal(view.phase, 'extract');
   });
 
   it('an incompatible or missing toolchain stops with each item next step', () => {
@@ -816,7 +832,7 @@ describe('auto-extract extraction record', () => {
     const blocked = auto.readState({ projectRoot: root });
     assert.equal(blocked.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'ready-reduced');
     assert.equal(blocked.phase, 'specs');
-    assert.match(blocked.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase: .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
+    assert.match(blocked.nextAction, /^Run \/fvs:auto-top-specs from the orchestrator session for the spec phase: .* Warning: auto-top-specs: ready, reduced - without probe-aeneas; /);
     assert.match(blocked.nextAction, /To restore, the owner can install probe-aeneas \(or set its path override\), then rerun \/fvs:auto-init/);
     assert.match(blocked.warnings[0], /^auto-top-specs: ready, reduced - without probe-aeneas; /);
     assert.match(blocked.warnings[1], /^no agreement is recorded: .*the spec phase does not wait for it$/);
@@ -829,7 +845,7 @@ describe('auto-extract extraction record', () => {
     assert.deepEqual(after.choices, blocked.state.choices);
     assert.equal(after.choicesGeneration, blocked.state.choicesGeneration, 'a refresh is not a choice change');
     assert.equal(after.profile.probes.find((entry) => entry.id === 'probe-aeneas').status, 'present-unqualified');
-    assert.match(refreshed.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase/);
+    assert.match(refreshed.nextAction, /^Run \/fvs:auto-top-specs from the orchestrator session for the spec phase/);
     assert.doesNotMatch(refreshed.nextAction, /ready, reduced/);
     const bytes = fs.readFileSync(stateFile(root));
     assert.equal(init(root).code, 'unchanged');
@@ -882,33 +898,33 @@ describe('auto-extract extraction record', () => {
     assert.equal(run(() => auto.recordRoadmap({ projectRoot: root, decision: 'declined' })).code, 'recorded');
   });
 
-  it('a refresh after AO is removed saves the gap, keeps the choices and extraction, then reports the blocker', () => {
+  it('a refresh after Lake is removed saves the gap, keeps the choices and extraction, then reports the blocker', () => {
     const root = project();
     init(root);
     const { out } = prepared(root);
     assert.equal(record(root, out, 0).code, 'recorded');
     const before = auto.readState({ projectRoot: root }).state;
 
-    const noAo = binWithout('ao');
-    const blocked = init(root, CHOICES, { bin: noAo });
+    const noLake = binWithout('lake');
+    const blocked = init(root, CHOICES, { bin: noLake });
     assert.equal(blocked.code, 'profile-blocked', JSON.stringify(blocked));
-    assert.match(blocked.message, /ao is missing; the recorded profile now holds these facts/);
+    assert.match(blocked.message, /lean is missing; the recorded profile now holds these facts/);
     const view = auto.readState({ projectRoot: root });
-    assert.equal(view.state.profile.items.find((entry) => entry.id === 'ao').verdict, 'missing');
+    assert.equal(view.state.profile.items.find((entry) => entry.id === 'lean').verdict, 'missing');
     assert.deepEqual(view.state.extraction, before.extraction);
     assert.deepEqual(view.state.choices, before.choices);
     assert.equal(view.state.choicesGeneration, before.choicesGeneration);
     assert.equal(view.readiness.find((entry) => entry.stage === 'auto-top-specs').status, 'no-route');
-    assert.match(view.nextAction, /^Setup is blocked: ao is missing\. .*Then rerun \/fvs:auto-init\.$/);
+    assert.match(view.nextAction, /^Setup is blocked: lean is missing\. .*Then rerun \/fvs:auto-init\.$/);
     assert.equal(view.phase, 'setup');
 
     const bytes = fs.readFileSync(stateFile(root));
-    assert.equal(init(root, CHOICES, { bin: noAo }).code, 'profile-blocked', 'a rerun on the same host still reports the blocker');
+    assert.equal(init(root, CHOICES, { bin: noLake }).code, 'profile-blocked', 'a rerun on the same host still reports the blocker');
     assert.deepEqual(fs.readFileSync(stateFile(root)), bytes);
-    assert.equal(init(root, { ...CHOICES, scope: 'another scope' }, { bin: noAo, confirmOverwrite: true }).code, 'profile-blocked');
+    assert.equal(init(root, { ...CHOICES, scope: 'another scope' }, { bin: noLake, confirmOverwrite: true }).code, 'profile-blocked');
     assert.deepEqual(auto.readState({ projectRoot: root }).state.choices, before.choices, 'a blocked choice change saves no choices');
 
-    assert.equal(init(root).code, 'profile-refreshed', 'restoring AO clears the blocker');
+    assert.equal(init(root).code, 'profile-refreshed', 'restoring Lake clears the blocker');
     assert.doesNotMatch(auto.readState({ projectRoot: root }).nextAction, /^Setup is blocked/);
   });
 
@@ -919,7 +935,7 @@ describe('auto-extract extraction record', () => {
     assert.equal(record(root, out, 0).code, 'recorded');
     const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     for (const entry of state.profile.items) {
-      if (['ao', 'lean'].includes(entry.id)) entry.verdict = 'available-but-unverified';
+      if (entry.id === 'lean') entry.verdict = 'available-but-unverified';
     }
     state.profile.probes = ['probe-aeneas', 'probe-rust', 'scip', 'rust-analyzer', 'probe-lean']
       .map((id) => ({ id, status: 'present-unqualified', path: `/opt/${id}`, lost: null }));
@@ -927,7 +943,7 @@ describe('auto-extract extraction record', () => {
     const unverified = /^auto-top-specs: ready, unverified - probe-aeneas, probe-rust, scip, rust-analyzer, probe-lean not qualified/;
     const first = auto.readState({ projectRoot: root });
     assert.equal(first.phase, 'specs');
-    assert.match(first.nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator for the spec phase: .*draft spec PR on the project's own repository/);
+    assert.match(first.nextAction, /^Run \/fvs:auto-top-specs from the orchestrator session for the spec phase: .*draft spec PR on the project's own repository/);
     assert.doesNotMatch(first.nextAction, /grants|stage profile \(|permission-ready|Before \/fvs/);
     assert.equal(first.warnings.length, 2);
     assert.match(first.warnings[0], unverified);
@@ -1509,7 +1525,7 @@ describe('a missing Aeneas once an extraction is recorded', () => {
     const prepare = prepared(succeeded);
     assert.equal(record(succeeded, prepare.out, 0).code, 'recorded');
     withoutInstall(succeeded);
-    assert.equal(init(succeeded, CHOICES, { bin: binWithout('aeneas', 'charon', 'ao') }).code, 'profile-blocked');
+    assert.equal(init(succeeded, CHOICES, { bin: binWithout('aeneas', 'charon', 'lake') }).code, 'profile-blocked');
   });
 });
 
@@ -1697,7 +1713,7 @@ describe('spec phase: record-spec and spec-status', () => {
     init(root);
     const { out } = prepared(root);
     assert.equal(record(root, out, 0).code, 'recorded');
-    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Run \/fvs:auto-top-specs from the AO orchestrator/);
+    assert.match(auto.readState({ projectRoot: root }).nextAction, /^Run \/fvs:auto-top-specs from the orchestrator session/);
     assert.equal(recordPr(root, 'HEAD').status, 0);
     const view = auto.readState({ projectRoot: root });
     assert.equal(view.phase, 'specs');
@@ -1707,7 +1723,7 @@ describe('spec phase: record-spec and spec-status', () => {
     assert.equal(recordMerge(root, 'HEAD').status, 0);
     const proofs = auto.readState({ projectRoot: root });
     assert.equal(proofs.phase, 'proofs');
-    assert.match(proofs.nextAction, /^The spec PR merge is recorded at [0-9a-f]{40}\. Run \/fvs:auto-execute from the AO orchestrator for the proof phase: .*No execution grant, stage profile or permission install is needed\./);
+    assert.match(proofs.nextAction, /^The spec PR merge is recorded at [0-9a-f]{40}\. Run \/fvs:auto-execute from the orchestrator session for the proof phase: .*No execution grant, stage profile or permission install is needed\./);
     assert.doesNotMatch(proofs.nextAction, /refactor/);
     assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/2', '--branch', 'refactor', '--head', 'HEAD').status, 0);
     const refactor = auto.readState({ projectRoot: root });
