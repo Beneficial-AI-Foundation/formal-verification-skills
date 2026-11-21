@@ -24,6 +24,7 @@ The engine does not authenticate who typed a command. It checks recorded evidenc
 | `record-agreement` | owner | The record step carries the owner's real reply. The helper `fvs-auto-agreement.mjs` drafts the fence and prints the exact command; the owner runs it. |
 | `record-roadmap` | orchestrator | Records the owner's accepted or declined answer about the roadmap offer. |
 | `record-extraction` | orchestrator | Run by the session that ran `/fvs:auto-extract`; it derives the extraction status itself. |
+| `record-scope` | orchestrator | Settles the scope of an extraction recorded before the scope was kept, without extracting again: it reads the workspace at the recorded source commit and, only after the owner confirms, records the one library crate it finds. It refuses several crates. |
 | `record-externals` | orchestrator | Records one entry per boundary; it refuses to drop one. |
 | `record-spec` | orchestrator | Records one review round for one spec file, in the project checkout; authors and reviewers never run it. |
 | `spec-status` | any | Reads the recorded spec files and whether the pull request can open; changes nothing. |

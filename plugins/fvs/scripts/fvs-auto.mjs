@@ -1934,14 +1934,32 @@ function loadRecord(file, code, validate, rerun, recovery = () => null) {
 }
 
 // A state whose only fault is its extraction record can be put right by extracting again, which replaces
-// that record and nothing else: the owner is not left with a state that only a hand edit can open.
+// that record and nothing else: the owner is not left with a state that only a hand edit can open. The
+// state file as it was is kept beside it in a timestamped backup, so the replaced record is never lost.
 const extractionOnly = (errors) => errors.every((text) => text.startsWith('extraction'));
 const extractionRecovery = (errors, file) => (extractionOnly(errors)
-  ? `To record the extraction again in place of the one that cannot be read, rerun /fvs:auto-extract; nothing else in ${file} is touched. Otherwise fix ${file} by hand or move it aside, then rerun /fvs:auto-init.` : null);
+  ? `To record the extraction again in place of the one that cannot be read, rerun /fvs:auto-extract; nothing else in ${file} is touched, and the file as it is now is kept beside it as ${file}.<time>.bak. Otherwise fix ${file} by hand or move it aside, then rerun /fvs:auto-init.` : null);
 
 // The exact text each loaded record was parsed from, so a writer can tell
 // whether the file changed after it read it.
 const RECORD_TEXT = new WeakMap();
+
+// States whose unreadable extraction record was dropped in memory, to be replaced by the write that follows.
+const REPLACES_UNREADABLE = new WeakSet();
+
+// A copy of `file` as it is, next to it, named by the time; it never overwrites an earlier backup.
+function keepBackup(file) {
+  const stamp = now().replace(/[:.]/g, '-');
+  for (let n = 0; ; n += 1) {
+    const backup = `${file}.${stamp}${n > 0 ? `-${n}` : ''}.bak`;
+    try {
+      fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+      return backup;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+}
 
 const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init', extractionRecovery);
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
@@ -2119,6 +2137,7 @@ function requireStateToExtract(root) {
     const state = { ...JSON.parse(text), extraction: null };
     if (stateErrors(state).length > 0) throw error;
     RECORD_TEXT.set(state, text);
+    REPLACES_UNREADABLE.add(state);
     return state;
   }
 }
@@ -2149,6 +2168,7 @@ function writeAtomic(file, value) {
 // agreements, extraction or memory records with its older copy.
 // ponytail: a killed writer leaves the lock behind and the next write refuses
 // naming it; recover it automatically (holder pid liveness) if that ever matters.
+// Returns the backup it made of the file as it was, which only a write that replaces an unreadable record makes.
 function commitState(root, base, value, file = statePath(root)) {
   const lock = `${file}.lock`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -2172,7 +2192,10 @@ function commitState(root, base, value, file = statePath(root)) {
       refuse('state-changed', `${file} changed after this command read it; nothing was written`, { file,
         nextStep: 'Rerun the command so it starts from the current state.' });
     }
+    // The backup is made under the lock and after the base check, so it holds exactly the text this command read.
+    const backup = base !== null && REPLACES_UNREADABLE.has(base) ? keepBackup(file) : null;
     writeAtomic(file, value);
+    return backup;
   } finally {
     fs.closeSync(fd);
     fs.rmSync(lock, { force: true });
@@ -2823,12 +2846,14 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     note: NOT_A_PROOF,
   };
   state.extraction = extraction;
-  commitState(root, state, state);
+  const backup = commitState(root, state, state);
+  // The record this one replaced could not be read; the state file as it was is kept, and the owner is told where.
+  const kept = backup === null ? '' : ` The extraction record that could not be read was replaced; the state file as it was is kept in ${backup}.`;
   if (reasons.length > 0) {
-    refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}`,
-      { extraction, nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
+    refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}${kept === '' ? '' : `.${kept}`}`,
+      { extraction, ...(backup === null ? {} : { backup }), nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
   }
-  return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}`, extraction };
+  return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}${kept}`, extraction, ...(backup === null ? {} : { backup }) };
 }
 
 // What the extraction engine's crate scan says about the workspace at `commit`. It is read from an export of that
