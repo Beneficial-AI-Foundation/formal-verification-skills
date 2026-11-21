@@ -47,6 +47,7 @@ describe('runtime checkpoint/current reconciliation', () => {
         reasons: status === 'failed' ? ['recorded synthetic failure'] : [], declared: { buildExitCode: status === 'failed' ? 1 : 0, oracle: status === 'failed' ? 'refused' : 'complete' },
         checks: Object.fromEntries(['status', 'verify-tree', 'verify-restore'].map((k) => [k, { ok: status === 'succeeded' }])),
         inputs: status === 'failed' ? null : { out: x.owned, manifestSha256: 'a'.repeat(64), crateRoot: x.root, mode: 'translation-patches', sourceCommit: f.git(x.root, 'rev-parse', 'HEAD'), patches: [] },
+        ...(status === 'succeeded' ? { scope: { kind: 'single-crate', basis: 'manifest', manifest: 'Cargo.toml' } } : {}),
         note: 'Protocol legacy execution pointer; not a genuine extraction claim.' };
       fs.writeFileSync(f.stateFile(x.root), JSON.stringify(s)); const before = fs.readFileSync(f.stateFile(x.root));
       const y = x.invoke(); assert.equal(y.result.code, 'partial'); assert.ok(y.result.observation.reasons.includes('prior-accounting-unknown'));

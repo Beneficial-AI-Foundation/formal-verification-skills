@@ -159,6 +159,38 @@ directory or a Rust path such as `crate::module`. It reads `translation.json` fr
 extraction, or from `--translation PATH`. The file records no visibility, so the list holds candidates:
 check each one in the Rust source before you call it public API.
 
+## Several crates
+
+A repository with several crates has one target per crate. At `/fvs:auto-init` the owner decides which
+crates to verify, and the agreement records the answer in `targets`: the crates to verify (by default every
+crate the extraction holds) and, for each crate the owner decided not to verify, that decision in their own
+words. `fvs-extract-patches.mjs crates --out OUT --release DIR` lists the crates of the patched repository, and the
+order that puts each crate after the crates it depends on. A crate the
+owner does not verify only has assumptions: nobody writes statements for its items, and an assumption about
+one of its items needs an entry in the externals record that the owner accepted.
+
+`read-state` reports `crates`: the target crates, the crates that are not verified, an order that puts each
+crate after the crates it depends on, and any decision the owner has not recorded yet (`pendingDecisions`).
+Carry the pending decisions into the report. Work crate by crate, providers first:
+
+- List the items of one crate with `node "$AUTO" list-items --project-root . --crate NAME`. With several
+  crates the command asks for `--crate`, so a list of one crate never reads as complete.
+- One spec file covers one crate. The crate of an item is the first segment of its Rust path, for example
+  `base_crate::module::function`. `record-spec` refuses an item of a crate the owner does not verify, an item
+  of a crate the agreement names but the extraction lacks, an item Charon could not translate and a spec
+  file that names items of two crates.
+- A crate that calls another target crate uses that crate's real translation, not an axiom (the
+  extraction is not recorded as succeeded otherwise), and its statements use the other crate's
+  statements as lemmas. No statement may rest on a hand-written axiom
+  that stands in for a function of another target crate that the stitching translated, or on a stale copy
+  of it: prove the function in its own crate and use the result. An item a target crate could not
+  translate itself, or that the run declares opaque, is a disclosed assumption that the owner accepts in
+  the externals record, and statements may rest on it. An
+  author may start such a statement early against the other crate's reviewed statement; the proof is
+  accepted only after the other crate is accepted (`auto-execute.md`).
+- `spec-status` lists each crate with its spec files, providers first, and is ready for the pull request
+  only when every target crate has a reviewed pass. `record-pr` names each crate that is not ready.
+
 ## GitHub rule
 
 Agents may open draft pull requests and edit a pull request body. They never post comments or reviews
@@ -166,6 +198,9 @@ on GitHub, never mark a pull request ready and never merge: only the owner comme
 merges.
 
 ## Probes and the strict lane
+
+The strict lane handles one crate in 3.0.0-rc3. For a repository with several target crates, use the pipeline
+above and the build check; do not start the strict lane for any of them.
 
 No probe is needed for this pipeline, and a missing probe never stops it. Read the `auto-top-specs`
 stage line in the profile first (`auto-setup.md`, "Probes and stage lines", says what each line

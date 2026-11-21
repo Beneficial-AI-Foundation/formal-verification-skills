@@ -118,6 +118,7 @@ Record only the missing owner choices, using the current applicable evidence for
   only after the owner's yes, never by a hand edit of the configuration; without a yes the extraction
   refuses those links. When no release is recorded yet, `/fvs:auto-extract` asks for the same choices
   before it extracts;
+- for a repository with several crates, which crates to verify (see "Several crates" below);
 - the observer set, named once: what a caller or user of the target can see and therefore must not be
   able to tell apart after a source patch (return values, errors as callers match them, external
   effects, panic occurrence and the file and line a panic reports), and what is deliberately not observed;
@@ -200,6 +201,25 @@ text lists require at least one entry. An execution grant is null or
 null or `{"destination":"<the project's own repository>","reference":"<actual grant evidence>"}`. Null
 remains ungranted; an owner-response reference, roadmap offer or passing check grants neither by
 inference. The draft pull requests of the later stages go to that recorded destination and nowhere else.
+
+### Several crates
+
+In a repository with several crates every crate is a verification target unless the owner decides
+otherwise, and results are used across crates: a crate that calls another verified crate uses that crate's
+translation and theorems, not axioms of its own about it. Ask the owner which crates to verify; the answer
+may be all of them. To see the crates in a fresh checkout, scan it
+(`fvs-extract-patches.mjs crates --project-root DIR --release DIR`; `aeneas-extract.md`, "Several
+crates"): it lists each crate with the crates of the repository it depends on, in an order that puts
+providers first. The same command with `--out OUT` reads a prepared copy and also names path
+dependencies that are not workspace members. A repository with no `Cargo.lock` is prepared with
+`--lock update --release DIR`: the lock is made inside the copy, never in the checkout, so offer this
+option and keep that lock with the extraction record.
+
+Record the answer in the optional `targets` key of the payload, for `layout` `monorepo` only:
+`"targets": {"crates": ["<crate to verify>"], "nonTargets": [{"crate": "<crate>", "decision": "<the owner's
+decision, in their words>"}]}`. Without the key every extracted crate is a target. Only the owner marks a
+crate a non-target; it is only assumed, with an accepted externals entry for each assumed item. A crate
+that uses a verified crate must be stitched to it, or the extraction is not recorded as succeeded.
 
 The observer set has no payload key of its own, and none may be added. Record it as one `conventions`
 entry that starts with the fixed prefix `Observer set:`, listing what is observed and, after `Not

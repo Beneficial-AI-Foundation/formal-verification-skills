@@ -23,8 +23,12 @@ node "$AUTO" read-state --project-root .
 ```
 
 Read the `code` field: `no-state` -> stop and point to `/fvs:auto-init`; `malformed-state` or
-`malformed-externals` -> print `message` and `nextStep` verbatim and stop. On `ok`, take the
-recorded `state.choices.source` (revision and configuration) and `state.choices.scope`.
+`malformed-externals` -> print `message` and `nextStep` verbatim and stop, except when `nextStep` says to
+run `/fvs:auto-extract` again: the only fault of the state is then the recorded extraction, which cannot
+be read, and Step 4 replaces that one record (it says what is kept). The refusal does not carry the
+choices, so read them from the state file it names in `file`, which still reads apart from the extraction.
+On `ok`, or in that case, take the recorded `state.choices.source` (revision and configuration) and
+`state.choices.scope`.
 
 ## Step 2: Check the checkout and the mode
 
@@ -127,8 +131,19 @@ verdict; leave the flag out otherwise. A blank reason is recorded as no reason.
   changes. The two declared inputs (build exit and oracle verdict) can only block success, never
   create it.
 - `extraction-failed`: the attempt is recorded as failed with its `reasons`. Report them as the
-  state; never retry by editing the record.
+  state; never retry by editing the record. An extraction over several crates also fails when crates
+  depend on each other, and when a crate the owner verifies uses another crate the owner verifies
+  without being stitched to it: its calls would be axioms in its own Lean, not the other crate's
+  translation. The reason names both crates. Stitch the first to the second in the extraction spec and
+  extract again, or, when the owner decides not to verify the second crate, record that decision in the
+  agreement (`targets`) and run this step again.
 - `no-state` or `malformed-state`: print `message` and `nextStep` and stop.
+
+When this step replaces an extraction record that could not be read (Step 1), the result's `message` and
+its `backup` field say so: the state file as it was is kept next to it as `state.json.<time>.bak`, and
+nothing else in the state changes. Tell the owner where the backup is. FVS replaces an extraction record
+this way only when that record cannot be read or is invalid, never one that reads, and it repairs no
+other part of the state.
 
 On a failure, skip Step 6 (the instructions describe a successful extraction) and still run Step 5
 when boundaries are known, so no boundary is lost.

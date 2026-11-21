@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { parseBudget, executionToolIdentity, ExecutionError, runExecutionFields, withProcessCancellation, runControl, runTaskCommand, observeOwnedWork, closeOwnedWork } from './fvs-execution.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -50,11 +51,13 @@ function usage() {
     '       node fvs-auto.mjs next-transition|execute-transition|verify-transition|verify-startup|ack-work|run-owned|record-progress|read-progress|observe-progress --input OPTIONS.json [--project-root PRIMARY]',
     '       node fvs-auto.mjs record-roadmap --decision accepted|declined [--project-root DIR] [--confirm-overwrite]',
     '       node fvs-auto.mjs record-extraction --out OUT --build-exit-code N --oracle complete|refused|unknown [--oracle-reason TEXT] [--project-root DIR]',
+    '       node fvs-auto.mjs record-scope --release DIR [--confirm] [--project-root DIR]',
     '       node fvs-auto.mjs record-externals --input RECORDS.json [--project-root DIR]',
     '       node fvs-auto.mjs record-spec --spec-file PATH --items ID[,ID...] --round N --verdict pass|changes|blocked --review FILE [--out-of-scope ID[,ID...]] [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs spec-status [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-override --key KEY --value TEXT --reason TEXT [--project-root DIR]',
-    '       node fvs-auto.mjs list-items [--translation PATH] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
+    '       node fvs-auto.mjs list-items [--translation PATH | --crate NAME] [--scope FILE|DIR|RUST_PATH[,...]] [--project-root DIR]',
+    '       node fvs-auto.mjs allowed-axioms [--commit SHA] [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --url URL --branch B --head SHA [--project-root DIR]',
     '       node fvs-auto.mjs record-pr --kind spec|proof --merged --merge-commit SHA [--project-root DIR]',
     '       node fvs-auto.mjs freeze|check|accept --request FILE --out EXCLUSIVE_DIR',
@@ -848,8 +851,36 @@ const ATTEMPT_STAGES = ['charon', 'aeneas', 'publish'];
 // The optional M2 extension records declared owner evidence, not authentication or proof acceptance.
 // Approval covers canonical JSON content; roadmap status logs and record timestamps are not approval.
 const AGREEMENT_FIELDS = ['schema', 'schemaVersion', 'mode', 'payload', 'ownerEvidence', 'approvedPayloadSha256'];
+// `targets` is optional and left out of the payload when the owner names no crates, so an
+// agreement written without it keeps its digest.
 const PAYLOAD_FIELDS = ['choicesGeneration', 'choices', 'contextVersion', 'boundaries', 'conventions', 'layout',
-  'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr'];
+  'claims', 'trust', 'acceptance', 'ownerReserved', 'execution', 'draftPr', 'targets'];
+const CRATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// The crates of a monorepo the owner verifies, and each crate the owner decided not to
+// verify, with that decision in the owner's words. A non-target crate's items can only
+// become assumptions; a target crate's items are proved, and other targets use the result.
+function targetsErrors(targets) {
+  const errors = [];
+  if (!fields(errors, targets, 'agreement.payload.targets', ['crates', 'nonTargets'])) return errors;
+  const { crates, nonTargets } = targets;
+  const names = Array.isArray(crates) && crates.every((name) => typeof name === 'string' && CRATE_NAME.test(name));
+  if (!names || crates.length === 0 || new Set(crates).size !== crates.length) {
+    errors.push('agreement.payload.targets.crates must be a list of distinct crate names with at least one entry');
+  }
+  if (!Array.isArray(nonTargets)) errors.push('agreement.payload.targets.nonTargets must be a list, empty when the owner drops no crate');
+  else {
+    nonTargets.forEach((entry, index) => {
+      const where = `agreement.payload.targets.nonTargets[${index}]`;
+      if (!fields(errors, entry, where, ['crate', 'decision'])) return;
+      if (typeof entry.crate !== 'string' || !CRATE_NAME.test(entry.crate)) errors.push(`${where}.crate must be a crate name`);
+      else if (names && crates.includes(entry.crate)) errors.push(`${where}.crate ${entry.crate} is also a target`);
+      if (!isText(entry.decision)) errors.push(`${where}.decision must be the owner's decision in words`);
+    });
+    if (new Set(nonTargets.map((entry) => entry?.crate)).size !== nonTargets.length) errors.push('agreement.payload.targets.nonTargets names a crate twice');
+  }
+  return errors;
+}
 const generationValid = (value) => Number.isSafeInteger(value) && value >= 0;
 const textList = (value) => Array.isArray(value) && value.every(isText);
 const canonicalJson = (value) => JSON.stringify(value, function (_key, item) {
@@ -872,6 +903,10 @@ function agreementErrors(value, stored = false) {
     if (!Number.isSafeInteger(p.contextVersion) || p.contextVersion < 1) errors.push('agreement.payload.contextVersion must be a positive safe integer');
     errors.push(...choiceErrors(p.choices, value.schemaVersion));
     if (!['single-crate', 'monorepo'].includes(p.layout)) errors.push('agreement.payload.layout must be single-crate or monorepo');
+    if ('targets' in p) {
+      if (p.layout !== 'monorepo') errors.push('agreement.payload.targets applies to layout monorepo only');
+      errors.push(...targetsErrors(p.targets));
+    }
     for (const key of ['boundaries', 'conventions', 'claims', 'trust', 'acceptance', 'ownerReserved']) {
       if (!textList(p[key]) || (['claims', 'trust', 'acceptance', 'ownerReserved'].includes(key) && p[key].length === 0)) {
         errors.push('agreement.payload.' + key + ' must be an explicit list of nonempty strings' + (['boundaries', 'conventions'].includes(key) ? '' : ' with at least one entry'));
@@ -1072,10 +1107,716 @@ function runValid(run) {
     && publicationValid(run.publication, run.translation);
 }
 
+// What ties a crate's stitch to a provider: the provider, the digest of the provider's own publish
+// stage that the stitch was made from, and the Lean modules it imports. An entry without them is only
+// a label, and a label does not make the crate use the provider's translation.
+const stitchEntries = (unit) => [].concat(unit?.stitch ?? []).filter((entry) => entry !== null && typeof entry === 'object');
+const stitchEvidence = (entry) => isText(entry.provider) && SHA256.test(entry.providerStageSha256 ?? '')
+  && Array.isArray(entry.modules) && entry.modules.length > 0 && entry.modules.every(isText);
+
+// The roster of a run over several crates, which the extraction engine hashes (the main crate, the
+// crates in order, each with its package, folder and stitch providers, the non-targets and the crates a
+// patch removed). The roster is rebuilt from the rows the run holds and must agree with them field for
+// field, besides carrying the hash every row and the run carry: a row dropped from the aggregate, one
+// added, or one whose package, folder, stitch or non-targets changed cannot pass for the extraction that
+// was made. Returns the first disagreement in words, or null.
+function rosterProblem(run) {
+  const { roster, rosterSha256, units } = run;
+  if (!SHA256.test(rosterSha256 ?? '') || !plainObject(roster) || sha256(JSON.stringify(roster)) !== rosterSha256) return 'the roster does not match its hash';
+  if (!units.every((unit) => unit.rosterSha256 === rosterSha256)) return 'a crate carries another roster than the run';
+  const crates = units.map((unit) => unit.crate);
+  const spelt = (crate) => typeof crate === 'string' && CRATE_NAME.test(crate);
+  const bad = crates.find((crate) => !spelt(crate));
+  if (bad !== undefined) return `${JSON.stringify(bad)} is not a crate name`;
+  const same = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, at) => item === b[at]);
+  if (new Set(crates).size !== crates.length || !Array.isArray(roster.order) || roster.order.length !== crates.length || !roster.order.every((crate) => crates.includes(crate))) {
+    return 'a crate is missing from the run, or was added to it';
+  }
+  if (!same(roster.order, run.order)) return 'the order of the crates is not the roster\'s';
+  if (!Array.isArray(roster.units) || roster.units.length !== roster.order.length) return 'the roster lists other crates than its order';
+  if (isText(run.crate) && roster.main !== run.crate) return 'the main crate is not the roster\'s';
+  for (const [at, crate] of roster.order.entries()) {
+    const row = units.find((unit) => unit.crate === crate);
+    const listed = roster.units[at];
+    const providers = [...new Set(stitchEntries(row).map((entry) => entry.provider))].sort();
+    if (listed?.crate !== crate || listed.package !== row.package || listed.dir !== row.dir || !same(Array.isArray(listed.stitch) ? [...new Set(listed.stitch)].sort() : null, providers)) {
+      return `crate ${crate} does not match its roster entry (package, folder or stitch providers)`;
+    }
+  }
+  const keyOf = (entry) => `${entry?.crate}\u0000${entry?.dir ?? ''}`;
+  if (!Array.isArray(roster.nonTargets)) return 'the roster lists its non-targets in another form';
+  const nonTargets = roster.nonTargets.map(keyOf).sort();
+  for (const row of units) {
+    if (!same((Array.isArray(row.nonTargets) ? row.nonTargets : []).map(keyOf).sort(), nonTargets)) return `crate ${row.crate} names other non-target crates than the roster`;
+  }
+  if (!Array.isArray(roster.dropped) || !roster.dropped.every((entry) => spelt(entry?.crate) && isText(entry.reason))) return 'the roster lists its dropped crates in another form';
+  if (roster.dropped.some((entry) => crates.includes(entry.crate) || roster.nonTargets.some((other) => other?.crate === entry.crate))) return 'a dropped crate is also in the run or a non-target';
+  return null;
+}
+
+// A run over several crates lists each crate's whole single-crate run in `units`, so
+// a reader written for one crate reads any crate's row unchanged. Every unit comes
+// from the same prepared copy as the main run, so it carries the same manifest hash,
+// and the same roster. A stitch is more than a label: it names the provider's publish stage that it was
+// made from, which must be the one the provider's row holds, and the crate's imports are its providers.
+// Returns the first problem in words, or null.
+// A stitch that replaced aliases leaves a Lean check for each file it changed (`leanChecks`). A row that replaced
+// some and records none cannot have its checks held against a receipt: an empty record on both sides would pass.
+function leanChecksProblem(rows) {
+  for (const row of rows) {
+    const replaced = stitchEntries(row).reduce((sum, entry) => sum + (Array.isArray(entry.replaced) ? entry.replaced.length : 0), 0);
+    if (replaced > 0 && !(Array.isArray(row.leanChecks) && row.leanChecks.length > 0)) {
+      return `${isText(row.crate) ? `crate ${row.crate}` : 'the run'} stitched ${replaced} alias${replaced === 1 ? '' : 'es'} but records no Lean check for ${replaced === 1 ? 'it' : 'them'}`;
+    }
+  }
+  return null;
+}
+
+export function unitsProblem(run) {
+  const { units } = run;
+  if (units === undefined) {
+    // The fields of an aggregate come together: a single crate's own run has none of them, so a run that
+    // still carries the roster, its hash or the order has lost its crate rows and is not a single crate.
+    const left = ['roster', 'rosterSha256', 'order'].filter((key) => key in run);
+    return left.length === 0 ? leanChecksProblem([run]) : `the run carries its ${left.join(', ')} but lists none of its crates`;
+  }
+  if (!Array.isArray(units) || units.length === 0) return 'the run lists no crate';
+  if (!units.every((unit) => runValid(unit) && isText(unit.crate) && isText(unit.status) && unit.manifestSha256 === run.manifestSha256)) return 'a crate row is not a valid run of this copy';
+  const roster = rosterProblem(run);
+  if (roster !== null) return roster;
+  for (const unit of units) {
+    for (const entry of stitchEntries(unit)) {
+      if (!stitchEvidence(entry)) return `the stitch of ${unit.crate} to ${isText(entry.provider) ? entry.provider : '(no provider)'} carries no evidence (the digest of the provider's publish stage and the Lean modules it imports)`;
+      const provider = units.find((row) => row.crate === entry.provider);
+      if (provider === undefined || provider === unit) return `crate ${unit.crate} is stitched to ${entry.provider}, which is not another crate of the run`;
+      if (provider.stages?.publish !== entry.providerStageSha256) return `the stitch of ${unit.crate} was made from another publication of ${entry.provider} than the run holds`;
+    }
+    const named = new Set(stitchEntries(unit).map((entry) => entry.provider));
+    if (Array.isArray(unit.imports) && (unit.imports.length !== named.size || !unit.imports.every((crate) => named.has(crate)))) return `crate ${unit.crate} imports crates its stitch does not name`;
+  }
+  return leanChecksProblem(units);
+}
+
+const unitsValid = (run) => unitsProblem(run) === null;
+const recordedRunValid = (run) => runValid(run) && unitsValid(run);
+
+// The recorded run of one crate. Without a crate it is the main run, which is all a
+// single-crate project has; with one it is that crate's unit, or null when the
+// extraction holds no such crate.
+export function runOf(state, crate) {
+  const run = state?.extraction?.run ?? null;
+  if (crate === undefined) return run;
+  if (run === null) return null;
+  return run.units ? run.units.find((unit) => unit.crate === crate) ?? null : (run.crate === crate ? run : null);
+}
+
+// The unit rows of a run: its units, or the run itself when it names its crate.
+const unitsOf = (run) => run?.units ?? (isText(run?.crate) ? [run] : []);
+
+// The crates a unit depends on, by every way the record names one: its Lean imports, the target
+// crates its LLBC reaches (`dependsOn` and the foreign target crates), the ones the extraction left
+// unstitched, and its stitch providers. The order of the crates and the stitch obligation read this
+// one set, so an edge named in one place and not another cannot be ordered yet go unchecked.
+function crateEdges(unit) {
+  const names = (list) => (Array.isArray(list) ? list : []);
+  return new Set([
+    ...names(unit.imports),
+    ...names(unit.dependsOn),
+    ...names(unit.unstitched),
+    ...stitchEntries(unit).map((entry) => entry.provider),
+    ...names(unit.foreignCrates).filter((entry) => entry?.kind === 'target').map((entry) => entry.crate),
+  ].filter(isText));
+}
+
+// The crates of an extraction that has more than one (or any, with `always`), with the
+// other extracted crates each one depends on and an order that puts providers before
+// consumers. A crate depends on another by any edge `crateEdges` names (its stitch, its
+// imports, the target crates its LLBC reaches); null for a single-crate run, so nothing about
+// that changes.
+function crateView(run, always = false) {
+  const units = unitsOf(run);
+  if (units.length < (always ? 1 : 2)) return null;
+  const crates = units.map((unit) => unit.crate);
+  const dependsOn = new Map(units.map((unit) => [unit.crate, [...crateEdges(unit)].filter((crate) => crates.includes(crate) && crate !== unit.crate).sort()]));
+  const derived = [];
+  const rest = [...crates].sort();
+  const ready = () => rest.find((crate) => dependsOn.get(crate).every((other) => derived.includes(other)));
+  for (let next = ready(); next !== undefined; next = ready()) {
+    derived.push(next);
+    rest.splice(rest.indexOf(next), 1);
+  }
+  // The extraction's own order is kept when it already puts every provider first.
+  const given = Array.isArray(run.order) && run.order.every((crate, at) => dependsOn.get(crate).every((other) => run.order.indexOf(other) < at)) ? run.order : null;
+  return {
+    order: given ?? derived,
+    ...(rest.length > 0 ? { cycle: rest } : {}),
+    units: units.map((unit) => ({ crate: unit.crate, package: unit.package ?? null, dir: unit.dir ?? null, dependsOn: dependsOn.get(unit.crate),
+      hasErrorItems: Array.isArray(unit.hasErrors?.items) ? unit.hasErrors.items : [] })),
+  };
+}
+
+// What the extraction and the owner's agreement together say about the crates of this
+// project, or null when there is nothing to say: a single crate, no non-target crate
+// the extraction declared, no crate a patch removed from the copy and no crate decision in
+// the agreement. A target is an extracted crate the owner did not drop; a crate the agreement
+// names a target but the extraction lacks is missing; a non-target crate, declared by the
+// extraction or dropped by the owner, only has assumptions. A crate a patch removed from the
+// copy (`omitted`: its sources are left out, or its path dependency became a registry release)
+// is such a crate too, and the extraction's own reason for removing it is no substitute for the
+// owner's decision: it waits for that decision like a declared non-target.
+export function crateContextOf(state) {
+  // No crate is accepted on an extraction whose scope is not settled.
+  return scopeUnsettled(state?.extraction) === null ? recordedCrateContext(state) : null;
+}
+
+// The same, for a run that is read as it is (the run being recorded has no scope of its own to settle yet).
+function recordedCrateContext(state) {
+  const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
+  if (!extraction) return null;
+  const { run } = extraction;
+  const units = unitsOf(run);
+  const agreed = state.agreements?.at(-1)?.payload?.targets ?? null;
+  const omitted = new Map((Array.isArray(run?.roster?.dropped) ? run.roster.dropped : []).filter((entry) => isText(entry?.crate)).map((entry) => [entry.crate, isText(entry.reason) ? entry.reason : null]));
+  const declared = [...new Set([...[run, ...units].flatMap((row) => (Array.isArray(row?.nonTargets) ? row.nonTargets.map((entry) => entry?.crate) : [])).filter(isText), ...omitted.keys()])].sort();
+  // The crates the extraction's own scope names, kept apart from the run: a run that is gone says nothing
+  // against them.
+  const scoped = extraction.scope?.kind === 'multi-crate' && Array.isArray(extraction.scope.libraryCrates) ? extraction.scope.libraryCrates.filter(isText) : [];
+  if (units.length < 2 && declared.length === 0 && agreed === null && scoped.length < 2) return null;
+  const dropped = new Set((agreed?.nonTargets ?? []).map((entry) => entry.crate));
+  const view = crateView(run, true);
+  if (view === null) {
+    // An extraction that holds no crate at all (it carries no attempt) says nothing against an
+    // agreement or a scope that names several: none of those crates is held, so none can be accepted, and
+    // the obligation to verify each of them stays.
+    const named = [...new Set([...declaredCrates({ targets: agreed }), ...scoped])].sort();
+    if (units.length > 0 || named.length < 2) return null;
+    return { view: { order: [], units: [] }, units, extracted: [], targets: [], missing: [...new Set([...(agreed?.crates ?? []), ...scoped])].sort(), nonTargets: new Set([...declared, ...dropped]), omitted, undecided: [], unlisted: [] };
+  }
+  // Providers first; the crates of a dependency cycle have no place in the order and follow it.
+  const extracted = [...view.order, ...(view.cycle ?? [])];
+  const targets = extracted.filter((crate) => !dropped.has(crate));
+  return {
+    view, units, extracted, targets,
+    missing: (agreed?.crates ?? []).filter((crate) => !extracted.includes(crate)),
+    nonTargets: new Set([...declared, ...dropped]),
+    omitted,
+    // Declared non-target crates and crates removed from the copy whose owner decision is not in the
+    // agreement yet.
+    undecided: declared.filter((crate) => !dropped.has(crate)),
+    // Extracted crates that an agreement with crate decisions names as neither a target nor a non-target.
+    unlisted: agreed === null ? [] : targets.filter((crate) => !agreed.crates.includes(crate)),
+  };
+}
+
+// The crate context of a recorded state, for a reader that takes a null context for a project of one crate (the
+// one-crate-per-spec-file rule, the allowed axioms): it refuses when the extraction the state holds has no settled
+// scope, because one crate is never what is left when nothing says how many there are.
+function settledCrateContext(state) {
+  const unsettled = state?.extraction?.status === 'succeeded' ? scopeUnsettled(state.extraction) : null;
+  if (unsettled !== null) refuse('scope-unsettled', unsettled, { nextStep: `Rerun /fvs:auto-extract so that the extraction is recorded with its scope.${settleAdvice(state.extraction)}` });
+  return crateContextOf(state);
+}
+
+// A record made before the extraction kept its scope has none at all, and can be settled without extracting
+// again; a scope that is there but unsettled, or contradicts the run, can only be recorded again by extracting.
+const settleAdvice = (extraction) => (extraction.scope !== undefined ? ''
+  : ' An extraction made before the scope was kept can instead be settled without extracting again: run record-scope --release DIR (the release folder the extraction used); it reads the workspace at the recorded source commit and, when that holds exactly one library crate, asks for the owner\'s confirmation to record it.');
+
+const crateContext = (root) => settledCrateContext(loadState(root));
+
+// The crates a recorded extraction has to account for: the ones the owner's agreement names (targets and
+// non-targets) and the in-repo library crates of the workspace the copy was prepared from (its
+// inventory, which a copy prepared with a release folder records). More than one means the scope is
+// several crates, and only an attempt over all of them can stand for it.
+export function declaredCrates({ manifest = null, targets = null } = {}) {
+  const named = [...(Array.isArray(targets?.crates) ? targets.crates : []), ...(Array.isArray(targets?.nonTargets) ? targets.nonTargets.map((entry) => entry?.crate) : [])];
+  const original = manifest?.workspace?.original?.crates;
+  const inRepo = (Array.isArray(original) ? original : []).filter((row) => row?.library).map((row) => row.crate);
+  return [...new Set([...named, ...inRepo].filter(isText))].sort();
+}
+
+// What the copy is a copy of, as the extraction engine records it in the manifest when it prepares the copy
+// (`scope.kind`: single-crate, multi-crate, or unknown; for several crates `libraryCrates` names the in-repo
+// library crates of the workspace). A single crate is a fact the extraction established, never what is left
+// when nothing says otherwise: a copy that records no scope, or one the engine could not classify, has an
+// unknown scope, and an unknown scope is never read as a single crate.
+const ESTABLISHED_SCOPES = ['single-crate', 'multi-crate'];
+const scopeOf = (manifest) => (plainObject(manifest?.scope) && [...ESTABLISHED_SCOPES, 'unknown'].includes(manifest.scope.kind) ? manifest.scope
+  : { kind: 'unknown', basis: 'none', reason: 'the copy records no scope (it was prepared before the extraction engine recorded one)' });
+
+// Why a scope and the run recorded with it cannot be of the same extraction, or null. A scope of several
+// crates needs the aggregate run over them: its crate rows and roster, with every library crate of the
+// workspace a row, a non-target or a dropped crate. The scope is kept in the extraction record apart from
+// the run, so a run that lost its rows (or is gone) cannot pass for the extraction of a single crate.
+function scopeProblem(scope, run) {
+  if (!plainObject(scope) || !ESTABLISHED_SCOPES.includes(scope.kind)) return 'the record does not say whether the extraction is of a single crate or of several, and an unknown scope is never read as a single crate';
+  if (run?.scope !== undefined && canonicalJson(run.scope) !== canonicalJson(scope)) return 'the scope the attempt recorded is not the scope of the copy';
+  if (scope.kind === 'single-crate') return null;
+  const named = scope.libraryCrates;
+  if (!Array.isArray(named) || named.length < 2 || !named.every((crate) => typeof crate === 'string' && CRATE_NAME.test(crate))) return 'the scope is several crates but does not name them';
+  if (!plainObject(run) || !Array.isArray(run.units) || !plainObject(run.roster)) {
+    return `the scope is several crates (${named.join(', ')}), but the record holds no run over them: it needs the attempt of every crate, each one a target, a non-target or dropped`;
+  }
+  const held = new Set([...run.units.map((unit) => unit?.crate), ...['nonTargets', 'dropped'].flatMap((key) => (Array.isArray(run.roster[key]) ? run.roster[key] : []).map((entry) => entry?.crate))]);
+  const loose = named.filter((crate) => !held.has(crate));
+  return loose.length === 0 ? null : `the scope names ${loose.join(', ')}, which the run neither extracts nor lists as a non-target or as dropped`;
+}
+
+// Why a succeeded extraction does not count yet, or null: its record keeps no scope (it was made before the extraction
+// kept one) or an unknown one. A single crate is never what is left when nothing says otherwise, so the phase machine
+// does not move past the extraction until it is recorded again with its scope established.
+const scopeUnsettled = (extraction) => (plainObject(extraction?.scope) && ESTABLISHED_SCOPES.includes(extraction.scope.kind) ? null
+  : 'the recorded extraction does not say whether it is of a single crate or of several, and an unknown scope is never read as a single crate');
+
+function crateReport(context, acceptance = null) {
+  const status = new Map((acceptance ?? []).map((entry) => [entry.crate, entry]));
+  return { order: context.view.order, targets: context.targets, nonTargets: [...context.nonTargets].sort(),
+    ...(context.missing.length > 0 ? { missing: context.missing } : {}), ...(context.view.cycle ? { cycle: context.view.cycle } : {}),
+    units: context.view.units.map((unit) => (status.has(unit.crate) ? { ...unit, accepted: status.get(unit.crate).accepted, ...(status.get(unit.crate).reason ? { reason: status.get(unit.crate).reason } : {}) } : unit)) };
+}
+
+// The per-crate acceptance at the head of the open proof PR, once an accepting receipt for it
+// was made against the recorded spec merge; null before that, and for a single-crate project.
+function proofAcceptance(root, state, specs, context) {
+  const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
+  if (!context || !specMerge) return null;
+  const proofPr = specs.prs.slice(specs.prs.lastIndexOf(specMerge) + 1).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
+  const receipt = proofPr ? buildCheckReceipt(root, proofPr.head) : null;
+  if (!(receipt?.accepted && receipt.specBase === specMerge.mergeCommit)) return null;
+  // The phase and the per-crate report read one verdict on the receipt: a receipt that does not count
+  // for the phase accepts no crate either.
+  return crateAcceptance(root, specs, context, receipt, crateReceiptProblem(root, state, specs, context, receipt, proofPr.head));
+}
+
+// Why an accepting receipt of the proof head does not count for a run over several crates, or null:
+// the allowed axioms cannot be derived at the head (`underivable`), the receipt was made with
+// another list or none (`list`), or the externals records are not the ones the check read
+// (`externals`). The list names only the axioms an accepted record puts on it, so a record whose
+// content changed while its status and source stayed leaves the list as it was: the receipt names the
+// digest of the whole externals file the check read, and the file now has to be that one.
+function crateReceiptProblem(root, state, specs, context, receipt, head) {
+  const allowed = allowedAxiomList(root, state, context, head, specs);
+  if (allowed.problems.length > 0) return { kind: 'underivable', text: `the allowed axioms cannot be derived at that commit: ${allowed.problems.join('; ')}` };
+  if (receipt.allowAxioms?.sha256 !== allowed.sha256) {
+    return { kind: 'list', text: `it was not made with the allowed axioms of this commit (${receipt.allowAxioms ? 'it holds another list' : 'it holds none'})` };
+  }
+  let current = null;
+  try { current = sha256(fs.readFileSync(externalsPath(root))); } catch { /* no externals file: the check read none either */ }
+  if ((receipt.externals?.sha256 ?? null) !== current) {
+    return { kind: 'externals', text: 'the externals records are not the ones the check read (the file changed after the check, or the receipt does not name the file it read)' };
+  }
+  return null;
+}
+
+// The pairs of verified crates where the consumer depends on the provider (its LLBC reaches items
+// of it, or the record names it) but is not stitched to it. Each such item is an axiom in the
+// consumer's own Lean: a black box where the provider's translation belongs, which a verified
+// provider must never be. An import label alone is not a stitch. A crate the owner does not verify
+// may be assumed, so it makes no pair.
+function unstitchedPairs(context) {
+  return context.units.filter((unit) => context.targets.includes(unit.crate)).flatMap((unit) => {
+    // Linked means a stitch with its evidence: an import label alone, or a stitch entry that names
+    // no provider publication and no module, does not make the crate use the provider's translation.
+    const linked = new Set(stitchEntries(unit).filter(stitchEvidence).map((entry) => entry.provider));
+    return [...crateEdges(unit)].filter((crate) => crate !== unit.crate && context.targets.includes(crate) && !linked.has(crate)).sort()
+      .map((provider) => ({ crate: unit.crate, provider }));
+  });
+}
+
+const unstitchedReason = ({ crate, provider }, subject = `crate ${crate}`) => `${subject} uses items of ${provider}, which is verified, without being stitched to it: they would be axioms in ${crate}'s Lean, not ${provider}'s translation. Stitch ${crate} to ${provider} in the extraction spec, or have the owner record ${provider} as a non-target in the agreement`;
+
+// What stops a recorded run over several crates from being used, given the targets the owner's
+// agreement names (null without a crate decision): a crate whose extraction did not complete, a
+// dependency cycle, which no order of providers before consumers fits, and a verified crate that
+// uses another verified crate's items without being stitched to it. The extraction engine refuses
+// the first and the last itself; this is the second check of the same cases. Empty for a single crate.
+export function crateProblems(run, agreedTargets = null) {
+  const context = run ? recordedCrateContext({ extraction: { status: 'succeeded', run }, agreements: agreedTargets === null ? [] : [{ payload: { targets: agreedTargets } }] }) : null;
+  if (context === null) return [];
+  return [
+    // A single crate's run has no status of its own: only the rows of a run over several crates do.
+    ...context.units.filter((unit) => isText(unit.status) && unit.status !== 'complete').map((unit) => `crate ${unit.crate} did not complete its extraction (${unit.status})`),
+    ...(context.view.cycle ? [`the crates ${context.view.cycle.join(', ')} depend on each other, so no order puts providers before consumers`] : []),
+    ...unstitchedPairs(context).map((pair) => unstitchedReason(pair)),
+  ];
+}
+
+// What the project itself still has to do once the extraction stitched crates together: the
+// axioms its theorems rest on changed. FVS never rewrites those lists; this is not part of the
+// extraction. Empty when no crate is stitched.
+const stitchedWork = (run) => (unitsOf(run).some((unit) => [].concat(unit.stitch ?? []).length > 0)
+  ? ' After the stitching the project has work FVS does not do: regenerate the pinned axiom lists in its own Lean project as a reviewed change, record an externals entry for each axiom that newly appears, and replace the hand-written Trusted axioms about functions the stitching now translates.'
+  : '');
+
+function crateWarnings(context) {
+  return [
+    ...context.missing.map((crate) => `the agreement names ${crate} as a target, but the extraction does not hold it`),
+    ...context.unlisted.map((crate) => `the extraction holds ${crate}, which the agreement names as neither a target nor a non-target: a successor agreement records the owner's decision`),
+    // The extraction is refused with these when it is recorded; they show here when the owner's
+    // decision changed afterwards, and keep the crate from being accepted.
+    ...unstitchedPairs(context).map((pair) => unstitchedReason(pair)),
+  ];
+}
+
+const crateDecisions = (context) => context.undecided.map((crate) => (context.omitted.has(crate)
+  ? `crate ${crate} left out of the extraction copy: the owner has not recorded a decision in the agreement`
+  : `non-target crate ${crate}: the owner has not recorded a decision in the agreement`));
+
+// The target crates the build check accepted at the head of the proof PR. The check builds the
+// whole project once, so a crate is accepted when every statement of its recorded spec files
+// built and every target crate it depends on is accepted too; a target with no built statement
+// is not accepted, and neither is one that uses a verified crate it is not stitched to (see
+// unstitchedPairs). What the statements may rest on beyond Lean's standard axioms is not judged
+// here: the build check enforces the allowed axioms, and the state requires a receipt made with
+// the current list (see allowedAxiomList).
+function crateAcceptance(root, specs, context, receipt, blocked = null) {
+  // The crates the agreement names but the extraction lacks follow either way: an extraction that holds
+  // none of them (no attempt, or one for other crates) leaves every one of them to be accepted.
+  const result = context.targets.length === 0 && context.extracted.length > 0
+    ? [{ crate: null, accepted: false, reason: 'the agreement drops every extracted crate, so nothing is verified' }] : [];
+  const prefix = repositoryPrefix(root);
+  const pruned = ownerChangesOf(specs);
+  const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
+  const files = new Map((Array.isArray(receipt.specFiles) ? receipt.specFiles : []).map((file) => [file?.path, file]));
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  const unstitched = unstitchedPairs(context);
+  const reasonOf = (crate) => {
+    const loose = unstitched.find((pair) => pair.crate === crate);
+    if (loose) return unstitchedReason(loose, 'it');
+    const own = rows.filter((row) => row.items.some((id) => itemCrate(id) === crate));
+    if (own.length === 0) return 'no spec file is recorded for this crate';
+    let statements = 0;
+    for (const row of own) {
+      const file = files.get(path.posix.join(prefix, row.specFile));
+      if (!file) return `${row.specFile} is not among the files the build check built`;
+      if (file.status !== 'built') return `${row.specFile} did not build in the check${isText(file.reason) ? `: ${file.reason}` : ''}`;
+      for (const statement of Array.isArray(file.statements) ? file.statements : []) {
+        statements += 1;
+        if (statement?.status !== 'built') return `the statement ${statement?.name} did not build in the check`;
+      }
+    }
+    return statements === 0 ? 'the build check built no statement of this crate' : null;
+  };
+  const accepted = new Set();
+  // Providers come first, so a crate is judged after the crates it depends on.
+  for (const crate of context.targets) {
+    const reason = (blocked === null ? null : `the build check receipt does not count: ${blocked.text}`) ?? reasonOf(crate)
+      ?? dependsOn.get(crate).filter((other) => !accepted.has(other)).map((other) => `it depends on ${other}, which is not accepted`).at(0) ?? null;
+    if (reason === null) accepted.add(crate);
+    result.push({ crate, accepted: reason === null, ...(reason === null ? {} : { reason }) });
+  }
+  for (const crate of context.missing) result.push({ crate, accepted: false, reason: 'the extraction does not hold this crate' });
+  // A crate the extraction only assumes is a black box in every crate that calls it, and nobody but the
+  // owner decides that a crate is not verified: until the agreement records it, the run is not done.
+  for (const crate of context.undecided) {
+    result.push({ crate, accepted: false, reason: context.omitted.has(crate)
+      ? `the extraction left this crate out of the copy${context.omitted.get(crate) === null ? '' : ` (${context.omitted.get(crate)})`}, and the owner has not recorded that decision in the agreement`
+      : 'the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement' });
+  }
+  return result;
+}
+
+// ---- The allowed axioms of a run over several crates -------------------------------------
+//
+// The build check refuses a statement that rests on an axiom beyond Lean's standard ones unless
+// the list it is given names that axiom, fully qualified. The engine writes the list from the
+// blobs of the commit being checked and requires the receipt to have been made with it. An
+// axiom is listed only when its origin says it is the owner's to assume:
+//   - declared in a file the extraction published (its hash is the recorded one), for an item of
+//     a crate the owner does not verify or of another library: it only asserts that the item
+//     exists;
+//   - declared there for an item another verified crate has no definition for, and named in the
+//     stitch's assumed list;
+//   - declared there for an item the verified crate itself left opaque, with an accepted
+//     externals record whose source starts with that item's path;
+//   - hand-written in a Trusted folder, citing in its docstring, in backticks, the id of an
+//     accepted externals record whose source names a crate path and no verified crate.
+// Anything else the engine cannot read or place is withheld and named, never listed.
+
+const ALLOWED_AXIOMS_SCHEMA = 'fvs/auto-allowed-axioms';
+const allowedAxiomsPath = (root) => path.join(root, STATE_DIR, 'allowed-axioms.json');
+
+// Lean source with its comments and string contents blanked (every newline kept, so lines and
+// columns hold), and the doc comments with where each one ends.
+function leanCode(text) {
+  const out = text.split('');
+  const docs = [];
+  const blank = (from, to) => {
+    for (let at = from; at < to; at += 1) if (out[at] !== '\n') out[at] = ' ';
+  };
+  let at = 0;
+  while (at < text.length) {
+    const here = text[at];
+    if (here === '/' && text[at + 1] === '-') {
+      // A block comment; they nest.
+      let depth = 1;
+      let end = at + 2;
+      while (end < text.length && depth > 0) {
+        if (text[end] === '/' && text[end + 1] === '-') { depth += 1; end += 2; }
+        else if (text[end] === '-' && text[end + 1] === '/') { depth -= 1; end += 2; }
+        else end += 1;
+      }
+      if (text[at + 2] === '-') docs.push({ end, text: text.slice(at, end) });
+      blank(at, end);
+      at = end;
+    } else if (here === '-' && text[at + 1] === '-') {
+      let end = at;
+      while (end < text.length && text[end] !== '\n') end += 1;
+      blank(at, end);
+      at = end;
+    } else if (here === '"') {
+      let end = at + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      blank(at + 1, Math.min(end, text.length));
+      at = end + 1;
+    } else if (here === "'" && !/[A-Za-z0-9_'!?]/.test(text[at - 1] ?? '')) {
+      // A character literal; a quote after an identifier is part of the name.
+      const literal = /^'(?:\\.|[^\\'\n])'/.exec(text.slice(at, at + 8));
+      if (literal) {
+        blank(at + 1, at + literal[0].length - 1);
+        at += literal[0].length;
+      } else at += 1;
+    } else at += 1;
+  }
+  return { code: out.join(''), docs };
+}
+
+// The axioms a Lean file declares, each with its fully qualified name (the enclosing
+// namespaces in front) and the doc comment right before it. `unread` counts axiom keywords the
+// reader could not place in a declaration: a file with any is not read at all.
+export function leanAxioms(text) {
+  const { code, docs } = leanCode(text);
+  const commands = [];
+  let offset = 0;
+  for (const [index, line] of code.split('\n').entries()) {
+    if (/^\S/.test(line)) commands.push({ line: index + 1, start: offset, text: line });
+    else if (commands.length > 0) commands.at(-1).text += `\n${line}`;
+    offset += line.length + 1;
+  }
+  const frames = [];
+  const axioms = [];
+  let pending = null;
+  for (const command of commands) {
+    let rest = command.text.trimStart();
+    let attributes = false;
+    for (;;) {
+      if (rest.startsWith('@[')) {
+        let depth = 0;
+        let close = 0;
+        for (; close < rest.length; close += 1) {
+          if (rest[close] === '[') depth += 1;
+          else if (rest[close] === ']' && (depth -= 1) === 0) break;
+        }
+        rest = rest.slice(close + 1).trimStart();
+        attributes = true;
+        continue;
+      }
+      const modifier = /^(?:private|protected|noncomputable|unsafe|partial|nonrec|public|meta)\b\s*/.exec(rest);
+      if (!modifier) break;
+      rest = rest.slice(modifier[0].length);
+    }
+    // The doc comment ends right before the command, with only blanks between.
+    const doc = docs.findLast((candidate) => candidate.end <= command.start && code.slice(candidate.end, command.start).trim() === '');
+    if (rest === '' && attributes) {
+      // Attributes on a line of their own belong to the declaration after them, and so does the doc comment before them.
+      pending = pending ?? (doc ? doc.text : null);
+      continue;
+    }
+    const docText = doc ? doc.text : pending;
+    pending = null;
+    const head = /^[A-Za-z_]+/.exec(rest)?.[0];
+    if (head === 'namespace') frames.push(/^namespace\s+(\S+)/.exec(rest)?.[1] ?? '');
+    else if (head === 'section' || head === 'mutual') frames.push('');
+    else if (head === 'end') frames.pop();
+    else if (head === 'axiom') {
+      const name = /^axiom\s+(«[^»]*»|[^\s:({[⦃]+)/.exec(rest)?.[1];
+      if (name) {
+        const full = name.startsWith('_root_.') ? name.slice(7) : [...frames.filter(Boolean), name].join('.');
+        axioms.push({ name, full, line: command.line, doc: docText });
+      }
+    }
+  }
+  const keywords = (code.match(/(?<![A-Za-z0-9_.'«»])axiom(?![A-Za-z0-9_'])/g) ?? []).length;
+  return { axioms, unread: keywords - axioms.length };
+}
+
+// The Rust path an extraction writes first in an item's doc comment, such as
+// `[core::num::{u32}::wrapping_div]:`, or null for a hand-written docstring.
+const docRustPath = (doc) => /^(?:Trait (?:implementation|declaration): )?\[(.*)\]:?$/.exec(doc?.replace(/^\/--\s*/, '').split('\n')[0].trim() ?? '')?.[1] ?? null;
+const docRecordIds = (doc) => [...(doc ?? '').matchAll(/`([^`\s]+)`/g)].map((entry) => entry[1]);
+
+const allowedAxiomsBytes = (crates) => Buffer.from(`${JSON.stringify({ schema: ALLOWED_AXIOMS_SCHEMA, schemaVersion: 2, crates }, null, 2)}\n`);
+
+// The path of the project root inside its git working tree, posix style: what the build check puts
+// in front of a project file in its receipt. Empty when the root is the top or in no repository.
+// The working tree's top is a real path, so the root is compared by its real path too: a project
+// reached through a symbolic link (a temporary folder on macOS, say) has the same prefix.
+function repositoryPrefix(root) {
+  const top = gitWorkingTree(root);
+  return top === null ? '' : path.relative(top, fs.realpathSync(root)).split(path.sep).join('/');
+}
+
+// The live spec files of each target crate, as the build check reports them. A spec file covers one
+// crate, so a statement belongs to the crate whose list holds its file.
+function crateSpecFiles(root, specs, context) {
+  const prefix = repositoryPrefix(root);
+  const pruned = ownerChangesOf(specs);
+  const rows = currentSpecRows(specs).filter((row) => pruned.get(row.specFile) !== 'pruned');
+  return new Map(context.targets.map((crate) => [crate, [...new Set(rows.filter((row) => row.items.some((id) => itemCrate(id) === crate))
+    .map((row) => path.posix.join(prefix, row.specFile)))].sort()]));
+}
+
+function trustedLeanFiles(root, commit) {
+  const run = spawnSync('git', ['--no-optional-locks', '-C', root, 'ls-tree', '-r', '--name-only', commit], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (run.status !== 0) return null;
+  return run.stdout.split('\n').filter((file) => file.endsWith('.lean') && file.split('/').slice(0, -1).some((folder) => folder.toLowerCase() === 'trusted'));
+}
+
+// Why an accepted externals record is not about axioms the owner may assume, or null. The
+// record's source is free text, so it must name a crate path and no verified crate.
+function recordSourceProblem(record, context) {
+  const text = record.source.symbol;
+  if (![...text.matchAll(/(?:^|[\s,;(])([A-Za-z_][A-Za-z0-9_]*)::/g)].length) return `the record ${record.id} names no crate path in its source`;
+  for (const unit of context.units.filter((entry) => context.targets.includes(entry.crate))) {
+    const names = [unit.crate, ...(isText(unit.package) ? [unit.package] : [])];
+    if (names.some((name) => new RegExp(`(?<![A-Za-z0-9_-])${name.replace(/[^A-Za-z0-9_]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text))) {
+      return `the record ${record.id} is about ${unit.crate}, a verified crate: prove it there`;
+    }
+  }
+  return null;
+}
+
+// What native_decide and bv_decide add to a statement's axioms, as the build check names them. The
+// build check judges such an axiom against the merged spec by its exact name: one the statement already
+// rested on there is kept and flagged, a new one is refused. The list never holds one, so a name that
+// looks native is not a way around that rule, and an unchanged baseline dependency needs no entry.
+const NATIVE_AXIOM = /\._native\.(native_decide|bv_decide)\.ax_|^Lean\.(ofReduceBool|trustCompiler)$/;
+const NATIVE_REASON = 'it is an axiom that native_decide or bv_decide adds: the build check judges it against the merged spec (an unchanged one is flagged, a new one refused), so it is never listed';
+
+// The axioms a run over several crates may rest on at `commit`: for each target crate, its live spec
+// files and the fully qualified, sorted axioms its statements may rest on (`crates`), the distinct
+// names over all of them (`axioms`), each axiom withheld and why, and the problems that stop the
+// list from being derived. A crate's axioms are the ones its own published Lean declares and the
+// owner may assume, those of every crate it depends on (stitched crates and the crates its LLBC
+// reaches, followed to the end), and the Trusted ones. A statement of one crate never rests on an
+// axiom that only another crate's section holds.
+export function allowedAxiomList(root, state, context, commit, specs = null) {
+  const problems = [];
+  const withheld = [];
+  const own = new Map(context.units.map((unit) => [unit.crate, new Set()]));
+  const trusted = new Set();
+  const accepted = new Map((loadExternals(root)?.records ?? []).filter((record) => record.status === 'assumption-accepted').map((record) => [record.id, record]));
+  const read = (file, expectedSha256) => {
+    // The root or the recorded path may reach the project through a symbolic link the other does
+    // not (a temporary folder on macOS, say): the file is the project's when either the two paths
+    // as written or the two real paths put it inside the project.
+    const absolute = path.resolve(root, file);
+    const inside = (base, target) => {
+      const below = path.relative(base, target);
+      return below === '' || below.startsWith('..') || path.isAbsolute(below) ? null : below;
+    };
+    const relative = inside(root, absolute) ?? inside(fs.realpathSync(root), realPathOf(absolute)) ?? '';
+    if (relative === '') {
+      problems.push(`${file} is outside this project (${root}), so it cannot be read at ${commit}: the extraction was recorded from another checkout, so record it again from this one`);
+      return null;
+    }
+    const posix = relative.split(path.sep).join('/');
+    const bytes = bytesAt(root, commit, posix);
+    if (bytes === null) problems.push(`${posix} is not in the commit ${commit}`);
+    else if (expectedSha256 !== undefined && sha256(bytes) !== expectedSha256) problems.push(`${posix} differs from the file the extraction published`);
+    else {
+      const { axioms, unread } = leanAxioms(bytes.toString('utf8'));
+      if (unread === 0) return { posix, axioms };
+      problems.push(`${posix} holds ${unread} axiom keyword(s) the engine could not place in a declaration`);
+    }
+    return null;
+  };
+  for (const unit of context.units) {
+    const assumed = [].concat(unit.stitch ?? []).flatMap((entry) => (Array.isArray(entry?.assumed) ? entry.assumed : []));
+    const foreign = new Set((Array.isArray(unit.foreignCrates) ? unit.foreignCrates : []).map((entry) => entry?.crate));
+    for (const entry of Array.isArray(unit.publication) ? unit.publication : []) {
+      if (!entry.projectPath.endsWith('.lean')) continue;
+      const file = read(entry.projectPath, entry.sha256);
+      for (const axiom of file?.axioms ?? []) {
+        const rustPath = docRustPath(axiom.doc);
+        const owner = rustPath?.split('::')[0];
+        const withhold = (reason) => withheld.push({ name: axiom.full, file: file.posix, reason });
+        if (NATIVE_AXIOM.test(axiom.full)) withhold(NATIVE_REASON);
+        else if (!owner || !CRATE_NAME.test(owner)) withhold('its doc comment gives no Rust path, so its crate cannot be read');
+        else if (owner !== unit.crate && !foreign.has(owner)) withhold(`its crate ${owner} is not one the extraction recorded for ${unit.crate}`);
+        else if (!context.targets.includes(owner)) own.get(unit.crate).add(axiom.full);
+        else if (owner === unit.crate) {
+          if ([...accepted.values()].some((record) => record.source.symbol === rustPath || record.source.symbol.startsWith(`${rustPath} `))) own.get(unit.crate).add(axiom.full);
+          else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner} that has no definition there: the owner accepts it with an externals record whose source starts with that path`);
+        } else if (assumed.some((item) => item?.rustPath === rustPath)) own.get(unit.crate).add(axiom.full);
+        else withhold(`it stands for ${rustPath}, an item of the verified crate ${owner}: stitch ${unit.crate} to ${owner}, or prove the function there`);
+      }
+    }
+  }
+  for (const relative of trustedLeanFiles(root, commit) ?? []) {
+    const file = read(relative);
+    for (const axiom of file?.axioms ?? []) {
+      const records = docRecordIds(axiom.doc).filter((id) => accepted.has(id)).map((id) => accepted.get(id));
+      const reason = NATIVE_AXIOM.test(axiom.full) ? NATIVE_REASON
+        : records.length === 0 ? 'its docstring cites no accepted externals record (the record id in backticks)' : records.map((record) => recordSourceProblem(record, context)).find(Boolean);
+      if (reason) withheld.push({ name: axiom.full, file: file.posix, reason });
+      else trusted.add(axiom.full);
+    }
+  }
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn]));
+  const reach = (crate) => {
+    const seen = new Set();
+    const visit = (next) => {
+      if (seen.has(next)) return;
+      seen.add(next);
+      for (const provider of dependsOn.get(next) ?? []) visit(provider);
+    };
+    visit(crate);
+    return seen;
+  };
+  const files = crateSpecFiles(root, specs, context);
+  const crates = [...context.targets].sort().map((crate) => ({
+    crate,
+    specFiles: files.get(crate),
+    axioms: [...new Set([...reach(crate)].flatMap((name) => [...(own.get(name) ?? [])]).concat([...trusted]))].sort(),
+  }));
+  const bytes = allowedAxiomsBytes(crates);
+  return { commit, crates, axioms: [...new Set(crates.flatMap((entry) => entry.axioms))].sort(), withheld, problems, bytes, sha256: sha256(bytes) };
+}
+
+// Writes the allowed axioms for the commit the build check will check: the open proof PR's
+// head when one is recorded, else HEAD. A project with one crate has no list.
+export function allowedAxioms({ projectRoot, commit }) {
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  const context = settledCrateContext(state);
+  if (context === null) refuse('not-multi-crate', 'this project has one crate: the build check runs without an allowed-axioms file');
+  const specs = loadSpecs(root);
+  const proofPr = (specs?.prs ?? []).filter((pr) => pr.kind === 'proof' && !pr.merged).at(-1);
+  const head = resolveRevision(root, commit ?? proofPr?.head ?? 'HEAD');
+  if (head === null) refuse('usage', `${commit ?? proofPr?.head ?? 'HEAD'} is not a commit in this checkout`);
+  const result = allowedAxiomList(root, state, context, head, specs);
+  if (result.problems.length > 0) refuse('allowed-axioms-unreadable', `the allowed axioms cannot be derived at ${head}: ${result.problems.join('; ')}`);
+  const file = allowedAxiomsPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, result.bytes);
+  return { code: 'written', message: `${result.axioms.length} allowed axiom(s) for ${result.crates.length} crate(s) written for ${head}${result.withheld.length > 0 ? `; ${result.withheld.length} withheld` : ''}`,
+    file, commit: head, sha256: result.sha256, names: result.axioms.length, crates: result.crates.length, withheld: result.withheld };
+}
+
 function extractionErrors(extraction) {
   const errors = [];
-  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run'])) return errors;
-  if ('run' in extraction && !runValid(extraction.run)) errors.push('extraction.run must be the re-validated extraction attempt');
+  if (!fields(errors, extraction, 'extraction', [...EXTRACTION_FIELDS, 'run', 'scope', 'scopeSettled'])) return errors;
+  // How a scope came to be recorded when the extraction itself did not record it: read afterwards from the
+  // workspace at the commit the extraction was made from, with the owner's confirmation.
+  if ('scopeSettled' in extraction && !(plainObject(extraction.scopeSettled) && isText(extraction.scopeSettled.sourceCommit) && isText(extraction.scopeSettled.recordedAt))) {
+    errors.push('extraction.scopeSettled must hold the source commit the scope was read at and when it was recorded');
+  }
+  if ('run' in extraction && !recordedRunValid(extraction.run)) {
+    // A run that reads as a run but disagrees with its roster or stitch says where.
+    const why = runValid(extraction.run) ? unitsProblem(extraction.run) : null;
+    errors.push(`extraction.run must be the re-validated extraction attempt${why ? ` (${why})` : ''}`);
+  }
   const missing = EXTRACTION_FIELDS.filter((key) => !(key in extraction));
   if (missing.length > 0) return [`extraction lacks ${missing.join(', ')}`];
   const { status, reasons, selected, declared, checks, inputs } = extraction;
@@ -1106,6 +1847,10 @@ function extractionErrors(extraction) {
       inputs !== null && inputs.sourceCommit === null && 'it has no source commit',
     ].filter(Boolean);
     if (contradictions.length > 0) errors.push(`extraction is recorded as succeeded although ${contradictions.join(', ')}`);
+    // A record with no scope, or an unknown one, is a valid record that the phase machine does not move past; a scope
+    // that is there must agree with the run.
+    const unsettled = scopeUnsettled(extraction) === null ? scopeProblem(extraction.scope, extraction.run) : null;
+    if (unsettled !== null) errors.push(`extraction.scope: ${unsettled}`);
   }
   return errors;
 }
@@ -1166,7 +1911,7 @@ const externalsPath = (root) => path.join(root, STATE_DIR, 'externals.json');
 
 // Null when the file is absent; a refusal naming the file and the next step
 // when it is unreadable or does not validate. It is never repaired here.
-function loadRecord(file, code, validate, rerun) {
+function loadRecord(file, code, validate, rerun, recovery = () => null) {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -1183,16 +1928,40 @@ function loadRecord(file, code, validate, rerun) {
     refuse(code, `${file} is not valid JSON: ${error.message}`, { file, nextStep });
   }
   const errors = validate(value);
-  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep });
+  if (errors.length > 0) refuse(code, `${file} is malformed: ${errors.join('; ')}`, { file, errors, nextStep: recovery(errors, file) ?? nextStep });
   RECORD_TEXT.set(value, text);
   return value;
 }
+
+// A state whose only fault is its extraction record can be put right by extracting again, which replaces
+// that record and nothing else: the owner is not left with a state that only a hand edit can open. The
+// state file as it was is kept beside it in a timestamped backup, so the replaced record is never lost.
+const extractionOnly = (errors) => errors.every((text) => text.startsWith('extraction'));
+const extractionRecovery = (errors, file) => (extractionOnly(errors)
+  ? `To record the extraction again in place of the one that cannot be read, rerun /fvs:auto-extract; nothing else in ${file} is touched, and the file as it is now is kept beside it as ${file}.<time>.bak. Otherwise fix ${file} by hand or move it aside, then rerun /fvs:auto-init.` : null);
 
 // The exact text each loaded record was parsed from, so a writer can tell
 // whether the file changed after it read it.
 const RECORD_TEXT = new WeakMap();
 
-const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init');
+// States whose unreadable extraction record was dropped in memory, to be replaced by the write that follows.
+const REPLACES_UNREADABLE = new WeakSet();
+
+// A copy of `file` as it is, next to it, named by the time; it never overwrites an earlier backup.
+function keepBackup(file) {
+  const stamp = now().replace(/[:.]/g, '-');
+  for (let n = 0; ; n += 1) {
+    const backup = `${file}.${stamp}${n > 0 ? `-${n}` : ''}.bak`;
+    try {
+      fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+      return backup;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+}
+
+const loadState = (root) => loadRecord(statePath(root), 'malformed-state', stateErrors, '/fvs:auto-init', extractionRecovery);
 const loadExternals = (root) => loadRecord(externalsPath(root), 'malformed-externals', externalsFileErrors, '/fvs:auto-extract');
 const specsPath = (root) => path.join(root, STATE_DIR, 'specs.json');
 const loadSpecs = (root) => loadRecord(specsPath(root), 'malformed-specs', specsFileErrors, 'the spec-phase command');
@@ -1356,6 +2125,23 @@ function requireState(root) {
   return state;
 }
 
+// The state for recording an extraction: the same, except that an extraction record which no longer
+// reads is dropped from the copy in memory, because this write replaces it. Any other fault still refuses.
+function requireStateToExtract(root) {
+  try {
+    return requireState(root);
+  } catch (error) {
+    const errors = error instanceof Refusal && error.code === 'malformed-state' ? error.details?.errors : null;
+    if (!Array.isArray(errors) || !extractionOnly(errors)) throw error;
+    const text = fs.readFileSync(statePath(root), 'utf8');
+    const state = { ...JSON.parse(text), extraction: null };
+    if (stateErrors(state).length > 0) throw error;
+    RECORD_TEXT.set(state, text);
+    REPLACES_UNREADABLE.add(state);
+    return state;
+  }
+}
+
 // Written to a sibling temporary file, flushed, then renamed over the target,
 // so a crash leaves either the old file or the new one, never a torn one.
 function writeAtomic(file, value) {
@@ -1382,6 +2168,7 @@ function writeAtomic(file, value) {
 // agreements, extraction or memory records with its older copy.
 // ponytail: a killed writer leaves the lock behind and the next write refuses
 // naming it; recover it automatically (holder pid liveness) if that ever matters.
+// Returns the backup it made of the file as it was, which only a write that replaces an unreadable record makes.
 function commitState(root, base, value, file = statePath(root)) {
   const lock = `${file}.lock`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1405,7 +2192,10 @@ function commitState(root, base, value, file = statePath(root)) {
       refuse('state-changed', `${file} changed after this command read it; nothing was written`, { file,
         nextStep: 'Rerun the command so it starts from the current state.' });
     }
+    // The backup is made under the lock and after the base check, so it holds exactly the text this command read.
+    const backup = base !== null && REPLACES_UNREADABLE.has(base) ? keepBackup(file) : null;
     writeAtomic(file, value);
+    return backup;
   } finally {
     fs.closeSync(fd);
     fs.rmSync(lock, { force: true });
@@ -1496,6 +2286,10 @@ export function initState({ projectRoot, choices, confirmOverwrite = false, plat
   return { ...readState({ projectRoot: root }), code: recorded ? 'updated' : 'created', message: `setup state written to ${statePath(root)}${warning}` };
 }
 
+// How a worker pushes a proof branch: with the FVS push command, which pushes one branch to the
+// destination recorded at init, never with git push.
+const PUSH_STEP = 'push with the FVS push command (`node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, never git push)';
+
 // The phase, the next action and its warnings, derived together so they never
 // disagree. After a successful extraction the next step is the spec phase: the
 // orchestrator spawns stock AO workers and runs the engine steps itself, so no
@@ -1513,6 +2307,8 @@ function progress(root, state, specs = null) {
   if (state.extraction?.status !== 'succeeded') {
     return { phase: 'extract', warnings: [], nextAction: state.extraction ? 'Rerun /fvs:auto-extract after fixing the recorded failure reasons.' : 'Run /fvs:auto-extract to extract the selected revision.' };
   }
+  const unsettled = scopeUnsettled(state.extraction);
+  if (unsettled !== null) return { phase: 'extract', warnings: [], nextAction: `Rerun /fvs:auto-extract: ${unsettled}.${settleAdvice(state.extraction)}` };
   // A recorded spec PR merge starts the proof phase.
   const specMerge = (specs?.prs ?? []).filter((pr) => pr.kind === 'spec' && pr.merged).at(-1);
   const stageName = specMerge ? 'auto-execute' : 'auto-top-specs';
@@ -1538,37 +2334,66 @@ function progress(root, state, specs = null) {
     const proofMerge = proofs.at(-1)?.merged ? proofs.at(-1) : null;
     if (!proofPr) {
       return { phase: 'proofs', warnings,
-        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + suffix };
+        nextAction: `The spec PR merge is recorded at ${specMerge.mergeCommit}. Run /fvs:auto-execute from the AO orchestrator for the proof phase: stock AO workers prove the merged statements, and the orchestrator opens one draft proof PR on the project's own repository and records it with record-pr --kind proof. No execution grant, stage profile or permission install is needed.` + stitchedWork(state.extraction.run) + suffix };
     }
     const receipt = buildCheckReceipt(root, proofPr.head);
     // An accepting receipt counts only when the statements were held to the recorded spec merge: a
     // receipt made with no spec base, or against another commit, proves nothing about them.
     const heldToSpec = receipt?.specBase === specMerge.mergeCommit;
-    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`;
-    if (receipt?.accepted && heldToSpec) {
-      return { phase: 'done', warnings,
+    // With several crates the build check also gets the allowed axioms, which the engine writes for
+    // the commit it checks; a project with one crate runs it without.
+    const several = crateContextOf(state) !== null;
+    const check = `node fvs-build-check.mjs --project-root ${root} --commit ${proofPr.head} --spec-base ${specMerge.mergeCommit}`
+      + (several ? ` --allow-axioms ${allowedAxiomsPath(root)}` : '');
+    const writeList = `node fvs-auto.mjs allowed-axioms --project-root ${root} --commit ${proofPr.head}`;
+    const checkSteps = several ? `Write the allowed axioms: ${writeList}; then run the build check: ${check}` : `Run the build check on that commit: ${check}`;
+    // With several crates the accepting receipt must also hold for every verified crate: one built
+    // project says nothing about a crate with no statement or one that depends on a crate that is
+    // not accepted, and it counts only when it was made with the allowed axioms of this commit. A
+    // single-crate project has no crate context.
+    const context = receipt?.accepted && heldToSpec ? crateContextOf(state) : null;
+    const gate = context ? crateReceiptProblem(root, state, specs, context, receipt, proofPr.head) : null;
+    if (gate) {
+      return { phase: 'proofs', warnings,
+        nextAction: gate.kind === 'underivable'
+          ? `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but ${gate.text}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix
+          : `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${gate.text}. ${checkSteps}; read-state reports done when it accepts.` + suffix };
+    }
+    const rejected = context ? crateAcceptance(root, specs, context, receipt).filter((entry) => !entry.accepted) : [];
+    if (receipt?.accepted && heldToSpec && rejected.length === 0) {
+      // With several crates the build check refuses a native-decision axiom the merged spec did not rest
+      // on, so a flag on its accepting receipt is a dependency the spec base already had. The owner's
+      // review decides it: the flag is reported, not hidden in the receipt.
+      const flagged = context && Array.isArray(receipt.flags) ? receipt.flags.filter(isText) : [];
+      const flagWarning = flagged.length > 0 ? [`the build check flags ${flagged.join('; ')}: a native-decision axiom the merged spec already rested on, which the owner's review decides`] : [];
+      return { phase: 'done', warnings: [...warnings, ...flagWarning],
         nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. `
-          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix };
+          + (proofMerge ? `The proof PR merge is recorded at ${proofMerge.mergeCommit}.` : 'The owner reviews and merges it; then record the merge with record-pr --kind proof --merged --merge-commit SHA.') + suffix
+          + flagWarning.map((warning) => ` Warning: ${warning}.`).join('') };
+    }
+    if (rejected.length > 0) {
+      return { phase: 'proofs', warnings,
+        nextAction: `The build check accepted the draft proof PR ${proofPr.url} at ${proofPr.head}, but not every verified crate is accepted: ${rejected.map((entry) => `crate ${entry.crate ?? '(none)'}: ${entry.reason}`).join('; ')}. Fix what is named, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.` + suffix };
     }
     return { phase: 'proofs', warnings,
       nextAction: (receipt?.stale
-        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${receipt.stale}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: ${receipt.stale}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
         : receipt?.accepted
-        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. Run the build check again: ${check}; read-state reports done when it accepts.`
+        ? `The build check receipt for the draft proof PR ${proofPr.url} at ${proofPr.head} does not count: it was made ${typeof receipt.specBase === 'string' ? `against the spec base ${receipt.specBase}` : 'without a spec base'}, not against the recorded spec merge ${specMerge.mergeCommit}. ${several ? checkSteps : `Run the build check again: ${check}`}; read-state reports done when it accepts.`
         : receipt
-          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, push, record the new head with record-pr --kind proof, and rerun the build check on it.`
-          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. Run the build check on that commit: ${check}; read-state reports done when it accepts.`) + suffix };
+          ? `The build check failed for the draft proof PR ${proofPr.url} at ${proofPr.head}: ${receipt.label}. Fix the proofs, ${PUSH_STEP}, record the new head with record-pr --kind proof, and rerun the build check on it.`
+          : `The draft proof PR ${proofPr.url} is recorded at ${proofPr.head}. ${checkSteps}; read-state reports done when it accepts.`) + suffix };
   }
   return { phase: 'specs', warnings,
     nextAction: (specPr
       ? `The draft spec PR ${specPr.url} is recorded: the owner reviews and merges it. After the merge, read the merge commit with gh pr view and record it with record-pr --kind spec --merged --merge-commit SHA. A spec refactor is another review round recorded with record-spec, then another record-pr.`
       : 'Run /fvs:auto-top-specs from the AO orchestrator for the spec phase: the orchestrator lists the public API items in scope, spawns stock AO workers to write the statements and review them adversarially, and opens one draft spec PR on the project\'s own repository for the owner to merge. No execution grant, stage profile or permission install is needed.')
-      + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
+      + stitchedWork(state.extraction.run) + warnings.map((warning) => ` Warning: ${warning}.`).join('') };
 }
 
 // What `read-state --brief` keeps: where the run is and what to do next, a few
 // lines instead of the recorded probe profile and every readiness row.
-const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'overrides', 'overridesNote', 'fvs'];
+const BRIEF_FIELDS = ['code', 'message', 'phase', 'nextAction', 'warnings', 'pendingDecisions', 'externals', 'crates', 'overrides', 'overridesNote', 'fvs'];
 
 export function readState({ projectRoot, requireAgreement = false, brief = false }) {
   if (brief && requireAgreement) refuse('usage', '--brief cannot be combined with --require-agreement: that check returns the whole agreement');
@@ -1588,16 +2413,22 @@ function readFullState({ projectRoot, requireAgreement }) {
   const externals = Object.fromEntries([['total', records.length],
     ...BOUNDARY_STATUSES.map((status) => [status, records.filter((record) => record.status === status).length])]);
   const overrides = currentOverrides(loadOverrides(root));
+  // Only a succeeded extraction with several crates, a declared non-target or a crate decision has a crate view.
+  const context = crateContextOf(state);
+  const specs = loadSpecs(root);
+  const next = progress(root, state, specs);
   return {
     code: 'ok',
     message: `auto-track state in ${statePath(root)}`,
     state,
     roadmapPresent: state.roadmap?.path ? fs.existsSync(path.join(root, state.roadmap.path)) : false,
     externals,
+    ...(context ? { crates: crateReport(context, proofAcceptance(root, state, specs, context)) } : {}),
     ...(Object.keys(overrides).length > 0 ? { overrides, overridesNote: OVERRIDES_NOTE } : {}),
-    pendingDecisions: requireAgreement || state.roadmap ? [] : ['roadmap'],
+    pendingDecisions: [...(requireAgreement || state.roadmap ? [] : ['roadmap']), ...(context ? crateDecisions(context) : [])],
     readiness: readiness(state.profile),
-    ...progress(root, state, loadSpecs(root)),
+    ...next,
+    ...(context ? { warnings: [...next.warnings, ...crateWarnings(context)] } : {}),
     ...(requireAgreement ? { agreement: requireStoredAgreement(root, state) } : {}),
   };
 }
@@ -1888,6 +2719,23 @@ function gitWorkingTree(directory) {
   return top ? fs.realpathSync(top) : null;
 }
 
+// The real path of a path that may not exist on disk: its deepest existing ancestor is resolved
+// and the rest is kept as written.
+function realPathOf(target) {
+  const missing = [];
+  let existing = path.resolve(target);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(existing), ...missing);
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return path.resolve(target);
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
 function resolveRevision(directory, revision) {
   const run = spawnSync('git', ['--no-optional-locks', '-C', directory, 'rev-parse', '--verify', '--quiet', `${revision}^{commit}`], { encoding: 'utf8' });
   return run.status === 0 ? run.stdout.trim() : null;
@@ -1905,7 +2753,7 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // A blank reason is the same as none, so the record satisfies the reader's optional-text rule.
   const reason = isText(oracleReason) ? oracleReason : undefined;
   const root = projectDirectory(projectRoot);
-  const state = requireState(root);
+  const state = requireStateToExtract(root);
   // A relative copy path is read from the project root, not the shell's working directory.
   const copy = path.resolve(root, out);
   const checks = {
@@ -1921,9 +2769,10 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     if (!check.ok) reasons.push(`the patch engine ${name} check refused (${check.code}): ${check.message}`);
   }
   let inputs = null;
+  let manifest = null;
   if (checks.status.ok) {
     const bytes = fs.readFileSync(path.join(copy, 'manifest.json'));
-    const manifest = JSON.parse(bytes);
+    manifest = JSON.parse(bytes);
     const { revision } = state.choices.source;
     const crate = manifest.projectRoot;
     if (manifest.mode !== 'translation-patches') reasons.push(`the copy was prepared in ${manifest.mode} mode; the auto track extracts through translation patches only`);
@@ -1954,11 +2803,34 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
   // An attempt recorded by the patch engine is attached only after the engine
   // re-validates its whole chain against the current files.
   let run;
-  if (fs.existsSync(path.join(copy, 'attempt.json'))) {
+  const attempted = fs.existsSync(path.join(copy, 'attempt.json'));
+  if (attempted) {
     const status = engineResult('attempt-status', copy);
     if (!status.ok) reasons.push(`the recorded extraction attempt does not check out (${status.code}): ${status.message}`);
     else if (!runValid(status.run) || status.run.manifestSha256 !== inputs?.manifestSha256) reasons.push('the recorded extraction attempt is not bound to this manifest');
+    else if (unitsProblem(status.run) !== null) reasons.push(`the crates of the recorded extraction attempt do not agree with its roster (${unitsProblem(status.run)}): extract again`);
     else run = status.run;
+  }
+  // Providers must come before consumers, and a verified crate must be stitched to the verified
+  // crates it uses, with the targets the owner's latest agreement names.
+  const agreedTargets = state.agreements?.at(-1)?.payload?.targets ?? null;
+  reasons.push(...crateProblems(run, agreedTargets));
+  // The scope is what the copy recorded when it was prepared, and a single crate is never what is left when
+  // it records none: an unknown scope is a reason of its own, which the owner settles by preparing the copy
+  // again (a release folder lets cargo read the workspace).
+  const scope = scopeOf(manifest);
+  if (manifest !== null && scope.kind === 'unknown') {
+    reasons.push(`the scope of this extraction is not established (${isText(scope.reason) ? scope.reason : 'the extraction engine could not tell a single crate from several'}), and an unknown scope is never read as a single crate: prepare the copy again so that it records its scope`);
+  }
+  // When the scope is several crates (the copy's scope, the agreement, or the workspace holds them), only a
+  // completed attempt over all of them can be recorded: a missing attempt, or the attempt of one crate,
+  // is never read as "nothing else to verify". An attempt that was refused has its own reason above.
+  const inScope = [...new Set([...declaredCrates({ manifest, targets: agreedTargets }), ...(scope.kind === 'multi-crate' && Array.isArray(scope.libraryCrates) ? scope.libraryCrates.filter(isText) : [])])].sort();
+  if ((inScope.length > 1 || scope.kind === 'multi-crate') && (attempted ? run !== undefined && run.roster === undefined : true)) {
+    reasons.push(`the crates ${inScope.join(', ')} are in scope (the copy's scope, the agreement, or the workspace names them), but the copy holds ${attempted ? 'the attempt of one crate only' : 'no extraction attempt'}: record a completed attempt over all of them, with an extraction spec that makes each crate a target, a non-target or dropped`);
+  } else if (manifest !== null && scope.kind !== 'unknown' && (!attempted || run !== undefined)) {
+    const unsettled = scopeProblem(scope, run);
+    if (unsettled !== null) reasons.push(unsettled);
   }
   const extraction = {
     status: reasons.length === 0 ? 'succeeded' : 'failed',
@@ -1969,16 +2841,118 @@ export function recordExtraction({ projectRoot, out, buildExitCode, oracle, orac
     declared: { buildExitCode, oracle, ...(reason ? { oracleReason: reason } : {}) },
     checks,
     inputs,
+    ...(manifest !== null ? { scope } : {}),
     ...(run ? { run } : {}),
     note: NOT_A_PROOF,
   };
   state.extraction = extraction;
-  commitState(root, state, state);
+  const backup = commitState(root, state, state);
+  // The record this one replaced could not be read; the state file as it was is kept, and the owner is told where.
+  const kept = backup === null ? '' : ` The extraction record that could not be read was replaced; the state file as it was is kept in ${backup}.`;
   if (reasons.length > 0) {
-    refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}`,
-      { extraction, nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
+    refuse('extraction-failed', `extraction recorded as failed: ${reasons.join('; ')}${kept === '' ? '' : `.${kept}`}`,
+      { extraction, ...(backup === null ? {} : { backup }), nextStep: 'Fix the reasons above and rerun /fvs:auto-extract; a failed extraction is never recorded as success.' });
   }
-  return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}`, extraction };
+  return { code: 'recorded', message: `extraction recorded as succeeded. ${NOT_A_PROOF}${kept}`, extraction, ...(backup === null ? {} : { backup }) };
+}
+
+// What the extraction engine's crate scan says about the workspace at `commit`. It is read from an export of that
+// commit and never from the working tree, which has moved on since (a spec commit sits on top of the extraction).
+// The export lives in a temporary folder; no copy is prepared and no extraction tool runs. A failure is returned
+// as an answer with `ok: false`, not thrown.
+function scanSourceScope({ crateRoot, commit, release }) {
+  const failed = (message) => ({ ok: false, code: 'scope-scan-failed', message });
+  const top = gitWorkingTree(crateRoot);
+  if (top === null) return failed(`${crateRoot} is not in a git working tree, so the commit the extraction was made from cannot be read`);
+  if (resolveRevision(top, commit) !== commit) return failed(`the commit ${commit} the extraction was made from is not in the repository at ${top}`);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-scope-'));
+  try {
+    const archive = path.join(work, 'source.tar');
+    const tree = path.join(work, 'tree');
+    fs.mkdirSync(tree);
+    const git = (args) => spawnSync('git', ['--no-optional-locks', '-C', top, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const exported = git(['archive', '--format=tar', '-o', archive, commit]);
+    const unpacked = exported.status === 0 ? spawnSync('tar', ['-xf', archive, '-C', tree], { encoding: 'utf8' }) : exported;
+    if (unpacked.status !== 0) return failed(`the commit ${commit} could not be exported: ${firstLine(unpacked.stderr) || 'no reason given'}`);
+    // A manifest the export left out (git attributes can exclude files from an archive) would hide a crate from the scan.
+    const listed = git(['ls-tree', '-r', '--name-only', commit]);
+    if (listed.status !== 0) return failed(`the files of commit ${commit} could not be listed`);
+    const left = listed.stdout.split('\n').filter((file) => path.posix.basename(file) === 'Cargo.toml' && !fs.existsSync(path.join(tree, file)));
+    if (left.length > 0) return failed(`the export of commit ${commit} lacks ${left.join(', ')}, so the workspace cannot be read whole`);
+    const prefix = path.relative(top, realPathOf(crateRoot));
+    const run = spawnSync(process.execPath, [ENGINE, 'crates', '--project-root', path.join(tree, prefix), '--release', release], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    try {
+      return JSON.parse(run.stdout);
+    } catch {
+      return failed(firstLine(run.stderr) || `the extraction engine exited ${run.status} without an answer`);
+    }
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// The crate a recorded single-crate run translated, read from its published translation; null when that file is
+// gone or names none.
+function recordedCrateName(run) {
+  try {
+    const { crate } = JSON.parse(fs.readFileSync(run.translation.projectPath, 'utf8'));
+    return isText(crate) ? crate : null;
+  } catch {
+    return null;
+  }
+}
+
+// Settles the scope of an extraction that was recorded before the extraction kept one, without extracting again:
+// the workspace at the commit the extraction was made from is read (`scan`), and when it holds exactly one
+// library crate, the owner can confirm that the extraction is of that single crate. The first call only reports
+// what it found and writes nothing; the call with `confirm` scans again and records. A workspace of several
+// crates, a scope the engine cannot establish, an extraction of several crates and a record that already has a
+// scope are refused, and nothing is written in any refusal.
+export function recordScope({ projectRoot, release, confirm = false, scan = scanSourceScope }) {
+  if (!isText(release)) refuse('usage', '--release must name the release folder the extraction used');
+  const root = projectDirectory(projectRoot);
+  const state = requireState(root);
+  const { extraction } = state;
+  const again = { nextStep: 'Run /fvs:auto-extract to extract again.' };
+  if (extraction?.status !== 'succeeded') refuse('no-extraction', 'there is no succeeded extraction record whose scope could be settled', again);
+  if ('scope' in extraction) {
+    refuse('scope-recorded', `the extraction already records its scope (${extraction.scope?.kind}); it is never changed afterwards`, scopeUnsettled(extraction) === null ? { nextStep: 'There is nothing to settle.' } : again);
+  }
+  if (['units', 'order', 'roster', 'rosterSha256'].some((key) => extraction.run?.[key] !== undefined)) {
+    refuse('aggregate-run', 'the recorded run holds crate rows, an order or a roster, which is an extraction of several crates and is never settled as one crate', again);
+  }
+  const { crateRoot, sourceCommit } = extraction.inputs;
+  const answer = scan({ crateRoot, commit: sourceCommit, release: path.resolve(root, release) });
+  const where = `the workspace at commit ${sourceCommit}`;
+  if (answer?.ok !== true) refuse('scope-scan-failed', `${where} could not be read: ${answer?.message ?? 'the scan gave no answer'}`, again);
+  const { scope } = answer;
+  if (!plainObject(scope) || !['single-crate', 'multi-crate', 'unknown'].includes(scope.kind)) {
+    refuse('scope-scan-failed', `the extraction engine reports no scope for ${where} (an older engine does not): update FVS, or extract again`, again);
+  }
+  if (scope.kind === 'unknown') refuse('scope-unsettled', `the scope of ${where} is not established (${isText(scope.reason) ? scope.reason : 'no reason given'})`, { scope, ...again });
+  const crates = Array.isArray(scope.libraryCrates) ? scope.libraryCrates.filter(isText) : [];
+  if (scope.kind === 'multi-crate') {
+    refuse('multi-crate-extraction-needed', `${where} holds several library crates (${crates.join(', ')}), so a multi-crate extraction is needed and this one cannot be settled as a single crate`,
+      { scope, nextStep: 'Run /fvs:auto-extract with an extraction spec that lists every crate.' });
+  }
+  if (scope.basis !== 'cargo' || crates.length !== 1) {
+    refuse('scope-scan-failed', `${where} does not name exactly one library crate (${crates.join(', ') || 'none'}), so no single crate is established`, { scope, ...again });
+  }
+  const [crate] = crates;
+  const recorded = recordedCrateName(extraction.run);
+  if (recorded !== null && recorded.replaceAll('-', '_') !== crate.replaceAll('-', '_')) {
+    refuse('scope-mismatch', `${where} holds the library crate ${crate}, but the recorded extraction translated ${recorded}`, { scope, ...again });
+  }
+  if (!confirm) {
+    return { code: 'scope-found', recorded: false, scope,
+      message: `${where} holds exactly one library crate, ${crate}; nothing is recorded yet`,
+      nextStep: `Tell the owner that the extraction is of the single crate ${crate}, and rerun this command with --confirm once they agree. The extraction is not run again.` };
+  }
+  state.extraction = { ...extraction, scope, scopeSettled: { sourceCommit, recordedAt: now() } };
+  const errors = stateErrors(state);
+  if (errors.length > 0) refuse('malformed-state', `the extraction record with this scope does not validate: ${errors.join('; ')}`, { errors });
+  commitState(root, state, state);
+  return { code: 'recorded', message: `the extraction is recorded as the single crate ${crate}; it was not run again`, extraction: state.extraction };
 }
 
 export function recordExternals({ projectRoot, records }) {
@@ -2030,6 +3004,36 @@ function committedSpec(root, commit, file) {
   return { relative: specFile, bytes };
 }
 
+// The crate an item belongs to: the first segment of its Rust path.
+const itemCrate = (id) => id.split('::')[0];
+
+// Every item of a spec file must belong to one target crate and must have been
+// translated: an item of a crate the owner or the extraction left out has no statement
+// to give, a target the extraction lacks has nothing to state it about, and an item
+// Charon could not translate has no definition.
+function checkSpecItems(context, ids) {
+  const owners = new Set();
+  for (const id of ids) {
+    const crate = itemCrate(id);
+    if (context.nonTargets.has(crate)) {
+      refuse('invalid-input', `${id}: crate ${crate} is not a verification target, so its items get no statement; the owner may only assume them`);
+    }
+    if (context.missing.includes(crate)) {
+      refuse('invalid-input', `${id}: crate ${crate} is a target in the agreement but the extraction does not hold it; extract it, or record the owner's decision to drop it`);
+    }
+    const unit = context.units.find((entry) => entry.crate === crate);
+    if (!unit) {
+      const known = context.units.map((entry) => entry.crate);
+      refuse('invalid-input', `${id}: crate ${crate} is not in the recorded extraction (crates: ${known.join(', ')})`, { crates: known });
+    }
+    if (Array.isArray(unit.hasErrors?.items) && unit.hasErrors.items.includes(id)) {
+      refuse('invalid-input', `${id} was not translated (Charon reported errors on it), so it cannot have a statement; name it in --out-of-scope`);
+    }
+    owners.add(crate);
+  }
+  if (owners.size > 1) refuse('invalid-input', `--items names items of ${[...owners].join(', ')}: a spec file covers one crate, so record one file per crate`, { crates: [...owners] });
+}
+
 // With a commit, the spec file is hashed from that commit's git object, so the
 // checkout is never moved or touched to record a review. The review report is
 // a working file (it is never committed), so it is still read from disk.
@@ -2039,6 +3043,8 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
   if (!Number.isInteger(round) || round < 1) refuse('usage', '--round must be a positive integer');
   const ids = idList(items, '--items');
   if (ids.length === 0) refuse('usage', '--items must name at least one item');
+  const context = crateContext(root);
+  if (context) checkSpecItems(context, ids);
   let resolved = null;
   if (commit !== undefined) {
     resolved = resolveRevision(root, commit);
@@ -2062,11 +3068,21 @@ export function recordSpec({ projectRoot, specFile, items, round, verdict, revie
 // and narrowed by an explicit scope: a source file or directory (src/hmac.rs) or a
 // Rust path prefix (libcrux_hmac::hmac). translation.json records no visibility, so
 // the list holds candidates for the public API, never a claim about it.
-export function listItems({ projectRoot, translation, scope }) {
+export function listItems({ projectRoot, translation, scope, crate }) {
   const root = projectDirectory(projectRoot);
+  if (translation !== undefined && crate !== undefined) refuse('usage', '--crate names a crate of the recorded extraction, so it cannot be combined with --translation');
   // Without --translation, the one a succeeded extraction published; a failed one names none.
-  const extraction = translation === undefined ? loadState(root)?.extraction : null;
-  const file = translation === undefined ? (extraction?.status === 'succeeded' ? extraction.run?.translation?.projectPath : undefined) : path.resolve(root, translation);
+  const state = translation === undefined ? loadState(root) : null;
+  const extraction = state?.extraction?.status === 'succeeded' ? state.extraction : null;
+  let run = extraction?.run;
+  if (extraction && crate !== undefined) {
+    run = runOf(state, crate);
+    if (!run) refuse('invalid-input', `the recorded extraction has no crate ${crate}`, { crates: (extraction.run?.units ?? []).map((unit) => unit.crate) });
+  } else if (extraction && (extraction.run?.units?.length ?? 0) > 1) {
+    // Several crates are translated, and a list of only one of them would read as complete.
+    refuse('invalid-input', 'the recorded extraction has several crates: pass --crate NAME', { crates: extraction.run.units.map((unit) => unit.crate) });
+  }
+  const file = translation === undefined ? run?.translation?.projectPath : path.resolve(root, translation);
   if (!file) refuse('invalid-input', 'no translation.json is known: pass --translation PATH, or record an extraction that names it', { nextStep: 'Run /fvs:auto-extract, or pass --translation PATH.' });
   let bytes;
   let data;
@@ -2137,9 +3153,37 @@ export function specStatus({ projectRoot, commit }) {
   });
   // A file the owner pruned at the merge never holds a later PR.
   const live = specFiles.filter((file) => owner.get(file.specFile) !== 'pruned');
-  const readyForPr = live.some((file) => file.verdict === 'pass') && !live.some((file) => file.verdict === 'changes' || file.stale);
+  const ready = (files) => files.some((file) => file.verdict === 'pass') && !files.some((file) => file.verdict === 'changes' || file.stale);
   const blocked = specFiles.filter((file) => file.verdict === 'blocked').map((file) => file.specFile);
-  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }), specFiles, readyForPr, blocked };
+  // With several crates, every crate needs its own reviewed spec files before the PR is ready.
+  const context = crateContext(root);
+  const crates = context ? specCrates(context, specFiles, live, ready) : null;
+  const readyForPr = ready(live) && (crates === null || crates.units.every((unit) => unit.ready));
+  return { code: 'ok', message: `${specFiles.length} spec file(s) recorded in ${specsPath(root)}`, ...(resolved === null ? {} : { commit: resolved }),
+    specFiles: crates ? specFiles.map((file) => ({ ...file, crates: crateNames(context, file.items) })) : specFiles, ...(crates ? { crates } : {}), readyForPr, blocked };
+}
+
+// The target crates an item list belongs to, providers first.
+const crateNames = (context, items) => context.targets.filter((crate) => items.some((id) => itemCrate(id) === crate));
+
+// Each target crate with the spec files that state its items, providers first, then the
+// targets the extraction lacks. A crate is ready when it has a reviewed pass and no file
+// of it waits for changes or is stale; a missing crate is never ready.
+function specCrates(context, specFiles, live, ready) {
+  const label = (files, crate) => (context.missing.includes(crate) ? 'the agreement names this crate as a target, but the extraction does not hold it'
+    : files.length === 0 ? 'no spec file is recorded for this crate'
+      : ready(files) ? 'spec files reviewed: pass'
+        : files.some((file) => file.verdict === 'changes' || file.stale) ? 'a spec file is waiting for changes or changed after its review'
+          : 'no spec file of this crate has a reviewed pass');
+  const dependsOn = new Map(context.view.units.map((unit) => [unit.crate, unit.dependsOn.filter((crate) => context.targets.includes(crate))]));
+  const order = [...context.targets, ...context.missing];
+  return {
+    order,
+    units: order.map((crate) => {
+      const files = live.filter((file) => file.items.some((id) => itemCrate(id) === crate));
+      return { crate, dependsOn: dependsOn.get(crate) ?? [], specFiles: files.map((file) => file.specFile), ready: !context.missing.includes(crate) && ready(files), label: label(files, crate) };
+    }),
+  };
 }
 
 // The raw bytes of a project-root-relative file at a commit (never converted by
@@ -2163,6 +3207,7 @@ export function recordPr({ projectRoot, kind, url, branch, head, merged = false,
     // Readiness is judged at the PR head when it is local: the checkout need not hold the spec files.
     const status = specStatus({ projectRoot: root, ...(commit === null ? {} : { commit }) });
     if (!status.readyForPr) warnings.push(status.specFiles.length === 0 ? 'no reviewed spec file is recorded' : 'spec-status is not ready for the PR (a file is waiting for changes or changed after its review)');
+    for (const unit of (status.crates?.units ?? []).filter((entry) => !entry.ready)) warnings.push(`crate ${unit.crate}: ${unit.label}`);
     if (commit === null) {
       warnings.push(`the head ${head} is not a local commit, so the recorded spec files were not compared with it; fetch the PR branch to compare`);
     } else {
@@ -2286,6 +3331,10 @@ const STATE_COMMANDS = {
       oracleReason: flags['oracle-reason'],
     });
   },
+  'record-scope': (argv) => {
+    const flags = stateFlags(argv, ['release'], ['confirm']);
+    return recordScope({ projectRoot: flags['project-root'], release: flags.release, confirm: flags.confirm === true });
+  },
   'record-externals': (argv) => {
     const flags = stateFlags(argv, ['input']);
     return recordExternals({ projectRoot: flags['project-root'], records: readInput(flags.input) });
@@ -2297,8 +3346,12 @@ const STATE_COMMANDS = {
       verdict: flags.verdict, review: flags.review, outOfScope: flags['out-of-scope'], commit: flags.commit });
   },
   'list-items': (argv) => {
-    const flags = stateFlags(argv, [], [], ['translation', 'scope']);
-    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope });
+    const flags = stateFlags(argv, [], [], ['translation', 'scope', 'crate']);
+    return listItems({ projectRoot: flags['project-root'], translation: flags.translation, scope: flags.scope, crate: flags.crate });
+  },
+  'allowed-axioms': (argv) => {
+    const flags = stateFlags(argv, [], [], ['commit']);
+    return allowedAxioms({ projectRoot: flags['project-root'], commit: flags.commit });
   },
   'record-override': (argv) => {
     const flags = stateFlags(argv, ['key', 'value', 'reason']);

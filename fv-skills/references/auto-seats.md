@@ -24,10 +24,12 @@ The engine does not authenticate who typed a command. It checks recorded evidenc
 | `record-agreement` | owner | The record step carries the owner's real reply. The helper `fvs-auto-agreement.mjs` drafts the fence and prints the exact command; the owner runs it. |
 | `record-roadmap` | orchestrator | Records the owner's accepted or declined answer about the roadmap offer. |
 | `record-extraction` | orchestrator | Run by the session that ran `/fvs:auto-extract`; it derives the extraction status itself. |
+| `record-scope` | orchestrator | Settles the scope of an extraction recorded before the scope was kept, without extracting again: it reads the workspace at the recorded source commit and, only after the owner confirms, records the one library crate it finds. It refuses several crates. |
 | `record-externals` | orchestrator | Records one entry per boundary; it refuses to drop one. |
 | `record-spec` | orchestrator | Records one review round for one spec file, in the project checkout; authors and reviewers never run it. |
 | `spec-status` | any | Reads the recorded spec files and whether the pull request can open; changes nothing. |
 | `record-pr` | orchestrator | Records the draft spec or proof pull request after it is opened, and the owner's merge of the spec pull request after the owner merges it. It never calls GitHub. |
+| `allowed-axioms` | orchestrator | In a multi-crate run, writes the list of axioms each crate's statements may rest on, for the commit the build check will check (the open proof pull request's head, else HEAD); the build check takes the file with `--allow-axioms`. It refuses in a one-crate project and when the list cannot be derived. |
 | `list-items` | any | Lists the Rust functions Aeneas translated, narrowed by a scope you give; reads `translation.json` and changes nothing. It records no visibility, so the list holds candidates for the public API. |
 | `record-override` | orchestrator | Records a run decision made after the agreement, such as a changed pull request base, so a resumed run keeps it. It is append-only and does not amend the agreement. |
 | `record-memory` | orchestrator | Registers the project memory once. |

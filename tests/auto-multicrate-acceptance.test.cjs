@@ -1,0 +1,654 @@
+'use strict';
+
+// The proof phase over several crates in scripts/fvs-auto.mjs. The build check builds the
+// whole project once and writes one receipt for a head; the state reports done only when
+// that receipt also holds for every verified crate (each has a built statement and every
+// crate it depends on is accepted too) and was made with the allowed axioms the engine
+// writes for that commit. A project with one crate reaches done on an accepting receipt
+// alone, as before. Every project is a temporary git fixture and every receipt is written
+// by hand; no build runs. What the allowed axioms hold is tested in auto-multicrate-axioms.
+
+const { describe, it, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const fixtures = require('./helpers/multicrate-fixtures.cjs');
+
+const { ROOT, cli, git, extracted, fn, unit, hmacAndSha2 } = fixtures;
+let auto = null;
+
+before(async () => {
+  auto = await import(pathToFileURL(path.join(ROOT, 'scripts', 'fvs-auto.mjs')).href);
+  fixtures.use(auto);
+});
+
+after(fixtures.cleanup);
+
+const HMAC_SPEC = 'formal/specs/Specs/Hmac.lean';
+const SHA2_SPEC = 'formal/specs/Specs/Sha2.lean';
+const HMAC_ITEM = 'libcrux_hmac::hmac::hmac';
+const SHA2_ITEM = 'libcrux_sha2::hacl::hash_256';
+
+const statement = (name, extra = {}) => ({ name, line: 1, status: 'built', reason: null, axioms: [], beyondStandard: [], flags: [], ...extra });
+const specFile = (file, statements, extra = {}) => ({ path: file, sha256: '0'.repeat(64), status: 'built', reason: null, statements, ...extra });
+
+// A project in the proof phase: both crates have a reviewed spec file, the spec PR is merged
+// and a draft proof PR is recorded at the head. `units` builds the extraction's crates.
+// With `prune` the owner removes that spec file before merging, with `below` the Lean project is a
+// folder of the repository.
+function proofPhase(units = hmacAndSha2, { targets = null, noSpecs = false, prune = null, below = false, dropped = [] } = {}) {
+  const root = extracted(units, { below, dropped });
+  const holds = (crate) => fixtures.readState(root).extraction.run.units.some((row) => row.crate === crate);
+  if (targets) fixtures.recordAgreement(root, fixtures.agreementFor(root, { targets }));
+  fs.mkdirSync(path.join(root, 'formal/specs/Specs'), { recursive: true });
+  fs.writeFileSync(path.join(root, HMAC_SPEC), 'recall hmac_spec\n');
+  fs.writeFileSync(path.join(root, SHA2_SPEC), 'recall sha2_spec\n');
+  fs.writeFileSync(path.join(root, 'review.md'), 'pass\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'specs');
+  const recordSpec = (file, item) => assert.equal(cli('record-spec', '--project-root', root, '--spec-file', file, '--items', item,
+    '--round', '1', '--verdict', 'pass', '--review', 'review.md').status, 0);
+  if (!noSpecs) {
+    recordSpec(HMAC_SPEC, HMAC_ITEM);
+    if (holds('libcrux_sha2') && (!targets || targets.crates.includes('libcrux_sha2'))) recordSpec(SHA2_SPEC, SHA2_ITEM);
+  }
+  if (prune) {
+    fs.rmSync(path.join(root, prune));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'the owner prunes a spec file');
+  }
+  const head = git(root, 'rev-parse', 'HEAD');
+  assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--url', 'https://example.invalid/pr/1', '--branch', 'specs', '--head', head).status, 0);
+  assert.equal(cli('record-pr', '--project-root', root, '--kind', 'spec', '--merged', '--merge-commit', head).status, 0);
+  assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/2', '--branch', 'proofs', '--head', head).status, 0);
+  return { root, head };
+}
+
+// The allowed axioms the build check was given, as it records them in a receipt: the engine's
+// own list for the commit, or null for a project with one crate, which runs without one.
+function allowAxioms(root, head) {
+  const written = cli('allowed-axioms', '--project-root', root, '--commit', head);
+  return written.json?.sha256 ? { file: written.json.file, sha256: written.json.sha256, names: written.json.names } : null;
+}
+
+// What a version 2 acceptance carries besides the statements: the Lean-level comparison of them with
+// the merged spec, which an acceptance without it does not count.
+const LEAN_COMPARISON = { toolchain: { lean: 'Lean (version 4.35.0)', githash: 'a'.repeat(40) }, statements: [{ name: 'f', declaration: 'f', constants: 2, sha256: 'a'.repeat(64) }],
+  bindings: [], dumps: { base: 'b'.repeat(64), head: 'c'.repeat(64) } };
+
+// The digest of the externals file as the build check records it in a receipt: null when there is none.
+function externalsDigest(root) {
+  const file = path.join(root, '.formalising', 'auto-fv', 'externals.json');
+  return fs.existsSync(file) ? fixtures.sha256(fs.readFileSync(file)) : null;
+}
+
+function receipt(root, head, files, extra = {}) {
+  const directory = path.join(root, '.formalising', 'auto-fv', 'build-check');
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${head}.json`), JSON.stringify({ schema: 2, kind: 'fvs-build-check', accepted: true,
+    label: 'accepted (build check)', commit: head, specBase: head, specFiles: files, allowAxioms: allowAxioms(root, head),
+    externals: { file: path.join(root, '.formalising', 'auto-fv', 'externals.json'), sha256: externalsDigest(root), records: [] },
+    integrity: { semantic: LEAN_COMPARISON }, ...extra }));
+}
+
+const bothBuilt = () => [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
+const view = (root) => cli('read-state', '--project-root', root).json;
+
+describe('the proof phase over several crates', () => {
+  it('is done when the receipt holds and every crate has a built statement', () => {
+    const { root, head } = proofPhase();
+    receipt(root, head, bothBuilt());
+    const result = view(root);
+    assert.equal(result.phase, 'done', result.nextAction);
+    assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]]);
+  });
+
+  // The saved extraction record is damaged after an accepting receipt exists for the proof PR's head: whatever
+  // is lost, the state does not read, so it is not done and no crate is accepted, and the owner is told that
+  // extracting again replaces the record. The scope the record keeps apart from the run is what tells the
+  // loss of a run over several crates from a project of one crate.
+  describe('a saved extraction that lost what holds its crates together', () => {
+    const lost = {
+      'the rows of its crates, with the roster, its hash and the order still there': [(state) => { delete state.extraction.run.units; },
+        /extraction\.run must be the re-validated extraction attempt \(the run carries its roster, rosterSha256, order but lists none of its crates\)/],
+      'every field of the aggregate (rows, order, roster and its hash), so the run reads as one crate\'s': [(state) => { fixtures.asSingleCrate(state.extraction.run); }, /extraction\.scope: the scope is several crates \(libcrux_hmac, libcrux_sha2\), but the record holds no run over them/],
+      'the whole run': [(state) => { delete state.extraction.run; }, /extraction\.scope: the scope is several crates .* but the record holds no run over them/],
+    };
+    // A record that keeps no scope, or an unknown one, still reads; the phase stays at the extraction.
+    const unsettled = {
+      'the scope the copy recorded': (state) => { delete state.extraction.scope; },
+      'the scope, as an extraction that never established one': (state) => { state.extraction.scope = { kind: 'unknown', basis: 'none', reason: 'no inventory' }; },
+    };
+
+    for (const [name, [change, said]] of Object.entries(lost)) {
+      it(`is not done, and accepts no crate, without ${name}`, () => {
+        for (const narrowed of [false, true]) {
+          const targets = narrowed ? { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; assumed.' }] } : null;
+          const { root, head } = proofPhase(hmacAndSha2, { targets });
+          receipt(root, head, narrowed ? [specFile(HMAC_SPEC, [statement('hmac_spec')])] : bothBuilt());
+          assert.equal(view(root).phase, 'done', 'before the loss');
+          const state = fixtures.readState(root);
+          change(state);
+          fixtures.writeState(root, state);
+          for (const args of [[], ['--brief']]) {
+            const result = cli('read-state', '--project-root', root, ...args);
+            assert.equal(result.status, 3, `${narrowed ? 'narrowed to one crate: ' : ''}${result.stdout}`);
+            assert.equal(result.json.code, 'malformed-state');
+            assert.match(result.json.message, said);
+            assert.match(result.json.nextStep, /rerun \/fvs:auto-extract/);
+            assert.equal('phase' in result.json, false);
+            assert.equal('crates' in result.json, false);
+          }
+        }
+      });
+    }
+
+    for (const [name, change] of Object.entries(unsettled)) {
+      it(`is not done, and accepts no crate, without ${name}`, () => {
+        const { root, head } = proofPhase();
+        receipt(root, head, bothBuilt());
+        assert.equal(view(root).phase, 'done', 'before the loss');
+        const state = fixtures.readState(root);
+        change(state);
+        fixtures.writeState(root, state);
+        const result = view(root);
+        assert.equal(result.phase, 'extract');
+        assert.match(result.nextAction, /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several/);
+        assert.equal('crates' in result, false);
+      });
+    }
+
+    it('a project of one crate, whose scope is positively that, does not lose its state with its run', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      const state = fixtures.readState(root);
+      fixtures.asSingleCrate(state.extraction.run);
+      fixtures.writeState(root, state);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
+  describe('a native-decision axiom the merged spec already rested on', () => {
+    // The build check keeps such a statement and flags it, and refuses a native axiom that is new since
+    // the merged spec; what it flags is reported to the owner, whose review decides.
+    const flagged = [specFile(HMAC_SPEC, [statement('hmac_spec', { flags: ['native_decide'] })]), specFile(SHA2_SPEC, [statement('hash_256_spec')])];
+    const flag = 'hmac_spec uses native_decide';
+    const flagWarnings = (result) => result.warnings.filter((text) => /^the build check flags /.test(text));
+
+    it('is done with the flag reported in the warnings and the next action', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, flagged, { flags: [flag] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      const warning = `the build check flags ${flag}: a native-decision axiom the merged spec already rested on, which the owner's review decides`;
+      assert.deepEqual(flagWarnings(result), [warning]);
+      assert.ok(result.nextAction.endsWith(` Warning: ${warning}.`), result.nextAction);
+    });
+
+    it('reports nothing when the receipt flags nothing', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt(), { flags: [] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(flagWarnings(result), []);
+    });
+
+    it('is not reported for a project with one crate, whose output is as before', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { flags: ['native_decide'] })])], { flags: [flag] });
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(flagWarnings(result), []);
+      assert.doesNotMatch(result.nextAction, /the build check flags/);
+    });
+  });
+
+  it('is not done while a crate has no spec file in the receipt, and says which', () => {
+    const { root, head } = proofPhase();
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs');
+    assert.match(result.nextAction, /^The build check accepted the draft proof PR https:\/\/example\.invalid\/pr\/2 at [0-9a-f]{40}, but not every verified crate is accepted: crate libcrux_sha2: formal\/specs\/Specs\/Sha2\.lean is not among the files the build check built; crate libcrux_hmac: it depends on libcrux_sha2, which is not accepted\. Fix what is named, push with the FVS push command \(`node <FVS scripts folder>\/fvs-auto-push\.mjs --branch fvs\/<name>`, never git push\), record the new head/);
+    assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', false]]);
+  });
+
+  it('is not done while a crate has a spec file with no built statement', () => {
+    const { root, head } = proofPhase();
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [])]);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs');
+    assert.match(result.nextAction, /crate libcrux_sha2: the build check built no statement of this crate/);
+  });
+
+  it('a crate that depends on an unaccepted crate is not accepted, and the provider is the one named first', () => {
+    const { root, head } = proofPhase();
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')]), specFile(SHA2_SPEC, [statement('hash_256_spec', { status: 'failing' })])]);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs');
+    assert.match(result.nextAction, /crate libcrux_sha2: the statement hash_256_spec did not build in the check; crate libcrux_hmac: it depends on libcrux_sha2, which is not accepted/);
+    assert.equal(result.crates.units.find((entry) => entry.crate === 'libcrux_sha2').reason, 'the statement hash_256_spec did not build in the check');
+  });
+
+  describe('the allowed axioms of the checked commit', () => {
+    it('a receipt made without them, or with another list, does not count, and the next action gives both steps', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt(), { allowAxioms: null });
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: it was not made with the allowed axioms of this commit \(it holds none\)\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms --project-root \S+ --commit [0-9a-f]{40}; then run the build check: node fvs-build-check\.mjs --project-root \S+ --commit [0-9a-f]{40} --spec-base [0-9a-f]{40} --allow-axioms \S+allowed-axioms\.json; read-state reports done when it accepts/);
+      // The per-crate report reads the same verdict: no crate is accepted through a receipt the phase refuses.
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', false]]);
+      assert.match(result.crates.units[0].reason, /^the build check receipt does not count: it was not made with the allowed axioms of this commit \(it holds none\)$/);
+      receipt(root, head, bothBuilt(), { allowAxioms: { file: 'x', sha256: 'e'.repeat(64), names: 3 } });
+      const other = view(root);
+      assert.match(other.nextAction, /\(it holds another list\)/);
+      assert.deepEqual(other.crates.units.map((entry) => entry.accepted), [false, false]);
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('names each crate\'s live spec files, in the form the build check reports them, so a statement is held to its own crate', () => {
+      const sectionsOf = (setup) => {
+        const written = cli('allowed-axioms', '--project-root', setup.root, '--commit', setup.head);
+        assert.equal(written.status, 0, written.stdout);
+        return JSON.parse(fs.readFileSync(written.json.file, 'utf8')).crates.map((entry) => [entry.crate, entry.specFiles]);
+      };
+      assert.deepEqual(sectionsOf(proofPhase()), [['libcrux_hmac', [HMAC_SPEC]], ['libcrux_sha2', [SHA2_SPEC]]]);
+      assert.deepEqual(sectionsOf(proofPhase(hmacAndSha2, { below: true })), [['libcrux_hmac', [`lean/${HMAC_SPEC}`]], ['libcrux_sha2', [`lean/${SHA2_SPEC}`]]],
+        'a project below the repository top: the path starts at the top, as the receipt\'s does');
+      assert.deepEqual(sectionsOf(proofPhase(hmacAndSha2, { prune: SHA2_SPEC })), [['libcrux_hmac', [HMAC_SPEC]], ['libcrux_sha2', []]], 'a file the owner pruned is not live');
+    });
+
+    it('derives the same list for a project root reached through a symbolic link', () => {
+      const { root, head } = proofPhase(hmacAndSha2, { below: true });
+      const link = path.join(fixtures.temporaryDirectory('fvs-link-'), 'project');
+      fs.symlinkSync(root, link);
+      const state = fixtures.readState(root);
+      const specs = JSON.parse(fs.readFileSync(path.join(root, '.formalising', 'auto-fv', 'specs.json'), 'utf8'));
+      const units = state.extraction.run.units;
+      const context = { units, targets: units.map((row) => row.crate), view: { units: units.map((row) => ({ crate: row.crate, dependsOn: row.imports ?? [] })) } };
+      const real = auto.allowedAxiomList(root, state, context, head, specs);
+      const linked = auto.allowedAxiomList(link, state, context, head, specs);
+      assert.deepEqual(linked.problems, []);
+      assert.deepEqual(linked.crates.map((entry) => [entry.crate, entry.specFiles]), [['libcrux_hmac', [`lean/${HMAC_SPEC}`]], ['libcrux_sha2', [`lean/${SHA2_SPEC}`]]]);
+      assert.equal(linked.sha256, real.sha256);
+    });
+
+    it('a recorded proof PR with no receipt yet is told to write the list before the check', () => {
+      const { root } = proofPhase();
+      assert.match(view(root).nextAction, /is recorded at [0-9a-f]{40}\. Write the allowed axioms: node fvs-auto\.mjs allowed-axioms .* then run the build check: node fvs-build-check\.mjs .* --allow-axioms /);
+    });
+
+    it('the list is the one derived from the commit: a receipt made with an older list stops counting when the records change', () => {
+      const { root, head } = proofPhase();
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+      // The owner accepts an assumption about a core function, and a Trusted file cites its record.
+      assert.equal(auto.recordExternals({ projectRoot: root, records: [{ id: 'gap-core-div', kind: 'external', source: { symbol: 'core::num::{u32}::wrapping_div', commit: 'a'.repeat(40) },
+        model: { symbol: 'wrapping_div_spec', sha256: 'b'.repeat(64) }, claimedBehaviour: 'the stated behaviour', reason: 'the owner accepts it', affectedRoots: [], evidence: ['note.md'],
+        status: 'assumption-accepted', decision: { by: 'the owner', at: '2026-11-19T00:00:00.000Z', evidence: 'reply' } }] }).code, 'recorded');
+      fs.mkdirSync(path.join(root, 'formal/Trusted'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'formal/Trusted/Core.lean'), 'namespace libcrux_hmac.Trusted\n/-- Accepted assumption, `gap-core-div`. -/\naxiom wrapping_div_spec : True\nend libcrux_hmac.Trusted\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'a Trusted axiom');
+      const next = git(root, 'rev-parse', 'HEAD');
+      assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/2', '--branch', 'proofs', '--head', next).status, 0);
+      const stale = allowAxioms(root, head);
+      // The spec merge stays the first commit; only the proof PR's head moved.
+      receipt(root, next, bothBuilt(), { specBase: head, allowAxioms: stale });
+      const old = view(root);
+      assert.equal(old.phase, 'proofs', 'a receipt for the new head made with the list of the old one');
+      assert.match(old.nextAction, /was not made with the allowed axioms of this commit \(it holds another list\)/);
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('an extraction file that no longer matches what the extraction published stops the phase, with the reason', () => {
+      const { root, head } = proofPhase((directory) => {
+        const rows = hmacAndSha2(directory);
+        const lean = path.join(directory, 'libcrux_hmac', 'Hmac.lean');
+        fs.writeFileSync(lean, 'namespace libcrux_hmac\nend libcrux_hmac\n');
+        rows[0].publication.push({ attemptPath: '/attempt/Hmac.lean', projectPath: lean, sha256: '1'.repeat(64) });
+        return rows;
+      });
+      receipt(root, head, bothBuilt(), { allowAxioms: { file: 'x', sha256: 'e'.repeat(64), names: 0 } });
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /the allowed axioms cannot be derived at that commit: libcrux_hmac\/Hmac\.lean differs from the file the extraction published/);
+      assert.deepEqual(result.crates.units.map((entry) => entry.accepted), [false, false], 'a list that cannot be derived accepts no crate');
+      assert.match(result.crates.units[1].reason, /^the build check receipt does not count: the allowed axioms cannot be derived at that commit: libcrux_hmac\/Hmac\.lean differs/);
+    });
+
+    it('a project with one crate is not asked for a list', () => {
+      const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+      assert.doesNotMatch(view(root).nextAction, /allowed-axioms/);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
+  it('a receipt that was not accepted, or made against another spec base, keeps its own message', () => {
+    const { root, head } = proofPhase();
+    receipt(root, head, bothBuilt(), { accepted: false, label: 'build check failed: a proof has sorry' });
+    assert.match(view(root).nextAction, /^The build check failed for the draft proof PR .*: build check failed: a proof has sorry\. Fix the proofs/);
+    receipt(root, head, bothBuilt(), { specBase: 'f'.repeat(40) });
+    assert.match(view(root).nextAction, /does not count: it was made against the spec base f{40}/);
+  });
+
+  describe('a receipt that does not count', () => {
+    it('accepts no crate when it is of an older version or carries no Lean-level comparison', () => {
+      const { root, head } = proofPhase();
+      for (const [name, extra, said] of [
+        ['a version 1 receipt', { schema: 1 }, /it is a version 1 receipt/],
+        ['a receipt with no version', { schema: undefined }, /it is a version unknown receipt/],
+        ['a receipt without the comparison', { integrity: undefined }, /it carries no Lean-level comparison/],
+        ['a comparison of no statement', { integrity: { semantic: { ...LEAN_COMPARISON, statements: [] } } }, /it carries no Lean-level comparison/],
+      ]) {
+        receipt(root, head, bothBuilt(), extra);
+        const result = view(root);
+        assert.equal(result.phase, 'proofs', name);
+        assert.match(result.nextAction, said, name);
+        assert.match(result.nextAction, /Write the allowed axioms: node fvs-auto\.mjs allowed-axioms/, `${name}: the next steps are those of a run over several crates`);
+        assert.equal(result.crates.units.some((entry) => entry.accepted === true), false, name);
+      }
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('stops counting when an accepted record changed after the check, though the list names the same axioms', () => {
+      const { root, head } = proofPhase();
+      assert.equal(auto.recordExternals({ projectRoot: root, records: [{ id: 'gap-core-div', kind: 'external', source: { symbol: 'core::num::{u32}::wrapping_div', commit: 'a'.repeat(40) },
+        model: { symbol: 'wrapping_div_spec', sha256: 'b'.repeat(64) }, claimedBehaviour: 'the stated behaviour', reason: 'the owner accepts it', affectedRoots: [], evidence: ['note.md'],
+        status: 'assumption-accepted', decision: { by: 'the owner', at: '2026-11-19T00:00:00.000Z', evidence: 'reply' } }] }).code, 'recorded');
+      fs.mkdirSync(path.join(root, 'formal/Trusted'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'formal/Trusted/Core.lean'), 'namespace libcrux_hmac.Trusted\n/-- Accepted assumption, `gap-core-div`. -/\naxiom wrapping_div_spec : True\nend libcrux_hmac.Trusted\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'a Trusted axiom');
+      const next = git(root, 'rev-parse', 'HEAD');
+      assert.equal(cli('record-pr', '--project-root', root, '--kind', 'proof', '--url', 'https://example.invalid/pr/2', '--branch', 'proofs', '--head', next).status, 0);
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+      const listBefore = allowAxioms(root, next).sha256;
+      // The owner changes what the record assumes; its id, status and source crate stay.
+      const file = path.join(root, '.formalising', 'auto-fv', 'externals.json');
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      data.records[0].model.sha256 = 'c'.repeat(64);
+      fs.writeFileSync(file, JSON.stringify(data));
+      assert.equal(allowAxioms(root, next).sha256, listBefore, 'the list names the same axioms, so its digest is the same');
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: the externals records are not the ones the check read/);
+      assert.match(result.nextAction, /Write the allowed axioms: node fvs-auto\.mjs allowed-axioms/);
+      assert.deepEqual(result.crates.units.map((entry) => entry.accepted), [false, false]);
+      assert.match(result.crates.units[0].reason, /^the build check receipt does not count: the externals records are not the ones the check read/);
+      // A check made after the change reads the new file.
+      receipt(root, next, bothBuilt(), { specBase: head });
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
+  // A crate stitched to another records, for each file it stitched, the Lean check block it appended and
+  // the digest of the file (the shape the extraction engine writes). The receipt counts only while the
+  // build check lists exactly those checks, as the build check writes them (without the block's length).
+  describe('the stitch checks of a stitched crate', () => {
+    const CHECK = { file: 'Funs.lean', relativePath: 'formal/extraction/libcrux_hmac/Funs.lean', module: 'Formal.Extraction.libcrux_hmac.Funs', items: 1,
+      blockSha256: 'd'.repeat(64), blockBytes: 120, fileSha256: 'e'.repeat(64) };
+    const stitched = (directory) => [
+      unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)], { stitch: [{ provider: 'libcrux_sha2', replaced: [SHA2_ITEM], files: ['Funs.lean'] }], leanChecks: [CHECK] }),
+      unit(directory, 'libcrux_sha2', [fn(SHA2_ITEM, 'src/hacl.rs', 5)]),
+    ];
+    const entry = (fields = {}) => { const { blockBytes, ...listed } = CHECK; return { unit: 'libcrux_hmac', ...listed, ...fields }; };
+    const withChecks = (entries, fields = {}) => ({ integrity: { semantic: LEAN_COMPARISON, stitchChecks: { units: 1, files: entries.length, items: entries.length, builtChecked: true, entries, ...fields } } });
+    const counts = (root) => { const result = view(root); return { result, accepted: result.crates.units.some((row) => row.accepted === true) }; };
+
+    it('is done when the receipt lists the recorded checks, and each crate is accepted', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      const { result, accepted } = counts(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.equal(accepted, true);
+      assert.deepEqual(result.crates.units.map((row) => row.accepted), [true, true]);
+    });
+
+    it('does not read a record that stitched aliases and kept no Lean check, so an older receipt with none cannot pass for it', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt());
+      const state = fixtures.readState(root);
+      state.extraction.run.units[0].stitch[0].replaced = [SHA2_ITEM];
+      delete state.extraction.run.units[0].leanChecks;
+      fixtures.writeState(root, state);
+      const result = cli('read-state', '--project-root', root);
+      assert.equal(result.status, 3, result.stdout);
+      assert.match(result.json.message, /crate libcrux_hmac stitched 1 alias but records no Lean check for it/);
+    });
+
+    it('does not count a receipt that lists none, though it is accepted and every statement built', () => {
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt());
+      const { result, accepted } = counts(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /does not count: the recorded extraction holds Lean checks for stitched files, but the receipt carries no record of them/);
+      assert.equal(accepted, false, 'no crate is accepted');
+    });
+
+    it('does not count a receipt whose checks differ from the recorded ones in any field of the key', () => {
+      const { root, head } = proofPhase(stitched);
+      for (const [name, entries, extra] of [
+        ['another crate', [entry({ unit: 'libcrux_sha2' })]],
+        ['another file', [entry({ relativePath: 'formal/extraction/libcrux_hmac/Other.lean' })]],
+        ['another module', [entry({ module: 'Formal.Extraction.libcrux_hmac.Other' })]],
+        ['no module where one is recorded', [entry({ module: null })]],
+        ['another count of aliases', [entry({ items: 2 })]],
+        ['another file digest', [entry({ fileSha256: '1'.repeat(64) })]],
+        ['another block digest', [entry({ blockSha256: '2'.repeat(64) })]],
+        ['one more check than the extraction recorded', [entry(), entry({ unit: 'libcrux_sha2' })]],
+        ['no check at all', []],
+        ['the checks listed but Lake did not compile each stitched file', [entry()], { builtChecked: false }],
+      ]) {
+        receipt(root, head, bothBuilt(), withChecks(entries, extra));
+        const { result, accepted } = counts(root);
+        assert.equal(result.phase, 'proofs', name);
+        assert.match(result.nextAction, /does not count: (the Lean checks that the recorded extraction holds|its stitch checks did not include)/, name);
+        assert.equal(accepted, false, name);
+      }
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+    });
+
+    it('does not count a receipt that lists checks when the extraction records none, and one made for other checks than now recorded', () => {
+      const plain = proofPhase();
+      receipt(plain.root, plain.head, bothBuilt(), withChecks([entry()]));
+      assert.equal(counts(plain.root).result.phase, 'proofs');
+      const { root, head } = proofPhase(stitched);
+      receipt(root, head, bothBuilt(), withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+      const state = fixtures.readState(root);
+      state.extraction.run.units[0].leanChecks = [{ ...CHECK, fileSha256: '3'.repeat(64) }];
+      fixtures.writeState(root, state);
+      assert.equal(counts(root).result.phase, 'proofs', 'the extraction was recorded again with another file');
+    });
+
+    it('holds a project narrowed to the stitched crate to the same rule', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(stitched, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      assert.equal(counts(root).result.phase, 'proofs');
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])], withChecks([entry()]));
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
+  it('a project the owner narrowed to one crate is judged on that crate alone', () => {
+    const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+    const { root, head } = proofPhase(hmacAndSha2, { targets });
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+    const result = view(root);
+    assert.equal(result.phase, 'done', result.nextAction);
+    assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', undefined]]);
+  });
+
+  describe('a verified crate that uses another verified crate without being stitched to it', () => {
+    // hmac's LLBC reaches sha2 items, but it is not stitched to sha2 (no stitch, no import), so
+    // each of those items would be an axiom in hmac's own Lean.
+    const unstitched = (directory) => {
+      const [hmac, sha2] = hmacAndSha2(directory);
+      hmac.stitch = [];
+      delete hmac.imports;
+      hmac.foreignCrates = [{ crate: 'libcrux_sha2', kind: 'target' }, { crate: 'core', kind: 'external' }];
+      return [hmac, sha2];
+    };
+
+    it('is not accepted, though every statement built, and the reason names the crate and the fix', () => {
+      const { root, head } = proofPhase(unstitched);
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /crate libcrux_hmac: it uses items of libcrux_sha2, which is verified, without being stitched to it: they would be axioms in libcrux_hmac's Lean, not libcrux_sha2's translation\. Stitch libcrux_hmac to libcrux_sha2 in the extraction spec, or have the owner record libcrux_sha2 as a non-target in the agreement\./);
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', false], ['libcrux_sha2', true]], 'the provider is accepted on its own statements');
+      assert.ok(result.warnings.some((text) => /^crate libcrux_hmac uses items of libcrux_sha2, which is verified, without being stitched to it/.test(text)));
+    });
+
+    it('is accepted once the owner records the provider as a non-target, and the state is done on the consumer alone', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'Not verified; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(unstitched, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.warnings.filter((text) => /without being stitched/.test(text)), []);
+    });
+  });
+
+  describe('a crate the extraction only assumes', () => {
+    // The extraction declares libcrux_traits a non-target: its items are axioms in the crates that call it.
+    const assumes = (directory) => {
+      const rows = hmacAndSha2(directory);
+      rows[0].nonTargets = [{ crate: 'libcrux_traits', source: 'the tree pinned by the extraction' }];
+      return rows;
+    };
+
+    it('keeps the run from being done until the owner records the decision in the agreement', () => {
+      const { root, head } = proofPhase(assumes);
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs');
+      assert.match(result.nextAction, /but not every verified crate is accepted: crate libcrux_traits: the extraction assumes this crate as a non-target, and the owner has not recorded that decision in the agreement\. Fix what is named/);
+      assert.ok(result.pendingDecisions.includes('non-target crate libcrux_traits: the owner has not recorded a decision in the agreement'));
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]], 'the verified crates are accepted on their own statements');
+    });
+
+    it('is done once the agreement records it, as the owner\'s decision', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Not verified; its behaviour is assumed.' }, { crate: 'libcrux_sha2', decision: 'Not verified either.' }] };
+      const { root, head } = proofPhase(assumes, { targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.pendingDecisions.filter((text) => /non-target/.test(text)), []);
+    });
+  });
+
+  describe('a crate a patch removed from the extraction copy', () => {
+    // The extraction's own reason for removing libcrux_traits is no substitute for the owner's decision.
+    const removed = [{ crate: 'libcrux_traits', reason: 'its path dependency became a registry release' }];
+    const one = (directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])];
+    const said = /but not every verified crate is accepted: crate libcrux_traits: the extraction left this crate out of the copy \(its path dependency became a registry release\), and the owner has not recorded that decision in the agreement\. Fix what is named/;
+    const pending = 'crate libcrux_traits left out of the extraction copy: the owner has not recorded a decision in the agreement';
+
+    it('keeps a run with one target from being done until the owner records the decision', () => {
+      const { root, head } = proofPhase(one, { dropped: removed });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'proofs', result.nextAction);
+      assert.match(result.nextAction, said);
+      assert.ok(result.pendingDecisions.includes(pending));
+      assert.deepEqual(result.crates.nonTargets, ['libcrux_traits']);
+    });
+
+    it('is done with one target once the agreement records the owner\'s decision about it', () => {
+      const targets = { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Left out of the copy on purpose; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(one, { dropped: removed, targets });
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', result.nextAction);
+      assert.deepEqual(result.pendingDecisions.filter((text) => /libcrux_traits/.test(text)), []);
+    });
+
+    it('keeps a run with several targets from being done until the owner records the decision', () => {
+      const { root, head } = proofPhase(hmacAndSha2, { dropped: removed });
+      receipt(root, head, bothBuilt());
+      const result = view(root);
+      assert.equal(result.phase, 'proofs', result.nextAction);
+      assert.match(result.nextAction, said);
+      assert.deepEqual(result.crates.units.map((entry) => [entry.crate, entry.accepted]), [['libcrux_hmac', true], ['libcrux_sha2', true]], 'the verified crates are accepted on their own statements');
+    });
+
+    it('is done with several targets once the agreement records the owner\'s decision about it', () => {
+      const targets = { crates: ['libcrux_hmac', 'libcrux_sha2'], nonTargets: [{ crate: 'libcrux_traits', decision: 'Left out of the copy on purpose; its behaviour is assumed.' }] };
+      const { root, head } = proofPhase(hmacAndSha2, { dropped: removed, targets });
+      receipt(root, head, bothBuilt());
+      assert.equal(view(root).phase, 'done');
+    });
+  });
+
+  it('an extraction that holds no attempt leaves every crate the agreement names to be accepted', () => {
+    // A state recorded before the agreement named the crates, or by hand, has no run to read the crates from.
+    const targets = { crates: ['libcrux_hmac', 'libcrux_sha2'], nonTargets: [] };
+    const { root, head } = proofPhase(hmacAndSha2, { targets });
+    const state = fixtures.readState(root);
+    delete state.extraction.run;
+    // The copy was positively one crate (the agreement is what names several), so the record has no run to lose.
+    state.extraction.scope = { kind: 'single-crate', basis: 'cargo', libraryCrates: ['libcrux_hmac'] };
+    fixtures.writeState(root, state);
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])]);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs', result.nextAction);
+    assert.match(result.nextAction, /but not every verified crate is accepted: crate libcrux_hmac: the extraction does not hold this crate; crate libcrux_sha2: the extraction does not hold this crate\. Fix what is named/);
+    assert.deepEqual(result.crates.missing, ['libcrux_hmac', 'libcrux_sha2']);
+    assert.deepEqual(result.crates.units, []);
+  });
+
+  it('the one crate left to verify still needs a built statement', () => {
+    const { root, head } = proofPhase(hmacAndSha2, { targets: { crates: ['libcrux_hmac'], nonTargets: [{ crate: 'libcrux_sha2', decision: 'x' }] } });
+    receipt(root, head, [specFile(HMAC_SPEC, [])]);
+    assert.match(view(root).nextAction, /crate libcrux_hmac: the build check built no statement of this crate/);
+  });
+
+  it('an agreement that drops every extracted crate leaves nothing verified, so the phase is not done', () => {
+    const targets = { crates: ['libcrux_traits'], nonTargets: [{ crate: 'libcrux_hmac', decision: 'x' }, { crate: 'libcrux_sha2', decision: 'y' }] };
+    const { root, head } = proofPhase(hmacAndSha2, { targets, noSpecs: true });
+    receipt(root, head, []);
+    const result = view(root);
+    assert.equal(result.phase, 'proofs');
+    assert.match(result.nextAction, /crate \(none\): the agreement drops every extracted crate, so nothing is verified/);
+  });
+});
+
+describe('a project with one crate', () => {
+  const oneCrate = (keepUnits) => {
+    const { root, head } = proofPhase((directory) => [unit(directory, 'libcrux_hmac', [fn(HMAC_ITEM, 'src/hmac.rs', 10)])]);
+    if (!keepUnits) {
+      const state = fixtures.readState(root);
+      fixtures.asSingleCrate(state.extraction.run);
+      fixtures.writeState(root, state);
+    }
+    return { root, head };
+  };
+
+  it('reaches done on an accepting receipt alone, whatever axioms the statements rest on', () => {
+    for (const keepUnits of [true, false]) {
+      const { root, head } = oneCrate(keepUnits);
+      receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec', { axioms: ['Trusted.anything'], beyondStandard: ['Trusted.anything'] })])]);
+      const result = view(root);
+      assert.equal(result.phase, 'done', `${keepUnits ? 'one-row units' : 'no units'}: ${result.nextAction}`);
+      assert.equal('crates' in result, false);
+    }
+  });
+
+  it('still needs the receipt to accept and to be held to the spec merge', () => {
+    const { root, head } = oneCrate(true);
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])], { accepted: false, label: 'build check failed: x' });
+    assert.equal(view(root).phase, 'proofs');
+    receipt(root, head, [specFile(HMAC_SPEC, [statement('hmac_spec')])], { specBase: null });
+    assert.match(view(root).nextAction, /without a spec base/);
+  });
+});
