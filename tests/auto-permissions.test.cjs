@@ -201,6 +201,87 @@ describe('the catalog', () => {
   });
 });
 
+// The closed catalog is the only source of probes and rules, so a development environment's command must not
+// reach it in any step: every program is one of the permitted ones, whatever the step is called.
+describe('whole catalog uses only the permitted programs', () => {
+  const PERMITTED = new Set(['lake', 'git', 'gh']);
+  const SCRATCH_RULE = /^Edit\(\/\.formalising\/auto-fv\/permission-check\/\*\*\)$/;
+  const fvsScript = (dir) => new RegExp(`^${dir.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/fvs-[a-z-]+\\.mjs$`);
+  // A program of the permitted set, or `node` running one FVS script of the scripts folder.
+  const permittedWords = (words, dir = PLACEHOLDER_DIR) => PERMITTED.has(words[0]) || (words[0] === 'node' && fvsScript(dir).test(words[1] || ''));
+  const wordsOfRule = (rule) => {
+    const bash = /^Bash\((.*)\)$/.exec(rule);
+    return bash ? bash[1].split(' ') : null;
+  };
+  // An environment CLI or the memory CLI is a word of its own. The branch pattern and the scripts folder are
+  // not checked for it: the owner chooses the branch namespace, and the checkout path can hold such a word.
+  const ENVIRONMENT_WORD = /(^|[^A-Za-z0-9_-])(ao|orca|bd)(?![A-Za-z0-9_-])/;
+  const withoutChosenParts = (text, dir) => text.split(dir).join('').replace(/--branch \S+/g, '--branch');
+
+  function checkCommand(command, where, dir = PLACEHOLDER_DIR) {
+    assert.ok(permittedWords(command.split(' '), dir), `${where}: ${command} runs a program outside the permitted set`);
+    assert.doesNotMatch(withoutChosenParts(command, dir), ENVIRONMENT_WORD, where);
+  }
+
+  function checkClaudeRule(rule, where, dir = PLACEHOLDER_DIR) {
+    const words = wordsOfRule(rule);
+    if (words) checkCommand(words.join(' '), where, dir);
+    else assert.match(rule, SCRATCH_RULE, `${where}: ${rule} is neither a permitted command nor the scratch edit rule`);
+  }
+
+  function checkCodexRule(rule, where, dir = PLACEHOLDER_DIR) {
+    assert.ok(permittedWords(rule.pattern, dir), `${where}: ${rule.pattern.join(' ')} runs a program outside the permitted set`);
+    assert.doesNotMatch(withoutChosenParts(JSON.stringify({ ...rule, pattern: rule.pattern.slice(0, 1) }), dir), ENVIRONMENT_WORD, where);
+    for (const example of [...(rule.match || []), ...(rule.notMatch || [])]) {
+      assert.ok(permittedWords(example.split(' '), dir), `${where}: example ${example}`);
+    }
+  }
+
+  it('holds for every probe, every Claude rule and every Codex rule of every step, in each prefix setting', () => {
+    // A branch namespace named after an environment is the owner's choice and is never a program.
+    for (const prefixes of [['fvs'], ['fvs', 'team/runs'], ['ao', 'orca']]) {
+      const catalog = lib.buildCatalog({ repo: REPO, prefixes, scriptsDir: PLACEHOLDER_DIR });
+      assert.ok(catalog.steps.length >= 5, 'the catalog was read');
+      for (const step of catalog.steps) {
+        const where = `${step.id} (${prefixes.join(',')})`;
+        for (const probe of step.probes) {
+          if (probe.tool === 'Bash') checkCommand(probe.command, `${where} probe`);
+          else {
+            assert.equal(probe.tool, 'Write', `${where} probe tool`);
+            assert.ok(probe.path.startsWith('.formalising/auto-fv/permission-check/'), `${where} probe path ${probe.path}`);
+            assert.doesNotMatch(probe.content, ENVIRONMENT_WORD, `${where} probe content`);
+          }
+        }
+        for (const rule of step.claude) checkClaudeRule(rule, `${where} claude`);
+        for (const rule of step.codex) checkCodexRule(rule, `${where} codex`);
+      }
+    }
+  });
+
+  it('holds for the rules that the write step actually generates, Claude settings and Codex rules file', { skip: pushSkip }, () => {
+    const steps = 'author-edit,lake-build,gh-read,git-read,git-push';
+    const preview = run('write-destination', base());
+    assert.equal(preview.json.code, 'confirmation-required');
+    assert.equal(run('write-destination', base('--confirm', preview.json.digest)).json.code, 'written');
+    const claude = run('write-allowlist', base('--runtime', 'claude', '--steps', steps));
+    assert.equal(claude.json.code, 'confirmation-required');
+    assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', steps, '--confirm', claude.json.digest)).json.code, 'written');
+    const allowed = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8')).permissions.allow;
+    assert.ok(allowed.length >= 6, 'the Claude rules were read');
+    // The generated rules spell the real scripts folder of this checkout.
+    const dir = path.dirname(PUSH_SCRIPT);
+    for (const rule of allowed) checkClaudeRule(rule, `written Claude rule ${rule}`, dir);
+    const codex = run('write-allowlist', base('--runtime', 'codex', '--steps', steps));
+    assert.equal(codex.json.code, 'confirmation-required');
+    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', steps, '--confirm', codex.json.digest)).json.code, 'written');
+    const text = fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8');
+    const patterns = [...text.matchAll(/pattern\s*=\s*(\[[^\]]*\])/g)].map((match) => JSON.parse(match[1]));
+    assert.ok(patterns.length >= 4, 'the Codex rules were read');
+    for (const pattern of patterns) checkCodexRule({ pattern }, `written Codex rule ${pattern.join(' ')}`, dir);
+    assert.doesNotMatch(withoutChosenParts(text, dir), ENVIRONMENT_WORD, 'the Codex rules file names no development environment');
+  });
+});
+
 describe('plan', () => {
   it('lists the probes and refuses a remote that is not the project repository', () => {
     const ok = run('plan', base());

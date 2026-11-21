@@ -227,11 +227,18 @@ describe('auto-init setup state', () => {
 
   it('a host without an ao CLI is not stopped: the setup is recorded with no item for any development environment', () => {
     const root = project();
-    const result = init(root, CHOICES, { bin: binWithout('ao') });
+    const bin = binWithout('ao');
+    const result = init(root, CHOICES, { bin });
     assert.equal(result.code, 'created', JSON.stringify(result));
     const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.deepEqual(state.profile.items.map((item) => item.id), ['host', 'rust', 'lean', 'aeneas', 'probe']);
-    const view = auto.readState({ projectRoot: root });
+    // The read runs under the same PATH as the init, and the test proves that the PATH has no ao: the
+    // helper keeps /usr/bin and /bin, so a machine with an ao there would make this test say so.
+    const view = run(() => {
+      const lookup = spawnSync('/bin/sh', ['-c', 'command -v ao'], { env: { PATH: process.env.PATH }, encoding: 'utf8' });
+      assert.notEqual(lookup.status, 0, `ao resolves on the stub PATH: ${lookup.stdout}`);
+      return auto.readState({ projectRoot: root });
+    }, bin);
     assert.equal(view.code, 'ok');
     assert.equal(view.phase, 'extract');
     assert.doesNotMatch(view.nextAction, /^Setup is blocked/);
@@ -1225,6 +1232,32 @@ describe('auto command and workflow text', () => {
       assert.match(step1, /FVS\s+checks\s+for\s+no\s+particular\s+(development\s+)?environment/, name);
       assert.doesNotMatch(step1, /command -v|\bao\b|Agent Orchestrator|exit 1/, `${name} step 1 must not require a development environment's CLI`);
       assert.match(workflow, /"\$AUTO" read-state --project-root \./, name);
+    }
+  });
+
+  it('no workflow or command asks for an ao command anywhere, and the strict lane note is the only place that names the CLI', () => {
+    // The one sentence of the two stage workflows that says the optional strict lane needs the ao CLI in this release.
+    const STRICT_NOTE = /\(in\s+3\.0\.0-rc3\s+it\s+drives\s+an\s+Agent\s+Orchestrator\s+controller\s+and\s+needs\s+its\s+`ao`\s+CLI\)/;
+    const AO_COMMAND = /\bao\s+(?:spawn|send|session|report|review|project|preview|browser|artifact|kill|steer|get|ls|claim-pr)\b/;
+    for (const name of members) {
+      const workflow = read(`fv-skills/workflows/${name}.md`);
+      const command = read(`commands/fvs/${name}.md`);
+      for (const [label, body] of [['workflow', workflow], ['command', command]]) {
+        // A probe of the ao CLI is never part of any step, in the strict part either.
+        assert.doesNotMatch(body, /command -v\s+ao\b|which\s+ao\b|ao\s+--version/, `${name} ${label} probes for ao`);
+        assert.doesNotMatch(body, AO_COMMAND, `${name} ${label} names an ao command`);
+      }
+      // Outside the strict lane note and the init workflow's strict section no text names an environment.
+      const openWorkflow = (name === 'auto-init' ? workflow.slice(0, workflow.indexOf('\n## Optional strict lane')) : workflow).replace(STRICT_NOTE, '');
+      assert.doesNotMatch(openWorkflow, /\bao\b|\bAO\b|AO_|Agent Orchestrator/, `${name} workflow names an environment outside the strict lane`);
+      assert.doesNotMatch(command, /\bao\b|\bAO\b|AO_|Agent Orchestrator/, `${name} command names an environment`);
+    }
+    // The init workflow says nothing about ao before its strict section, and its strict section is marked optional.
+    const init = read('fv-skills/workflows/auto-init.md');
+    assert.ok(init.indexOf('\n## Optional strict lane') > 0);
+    assert.match(init, /Everything above works without this section, and the relaxed path never calls what is in it/);
+    for (const name of ['auto-top-specs', 'auto-execute']) {
+      assert.match(read(`fv-skills/workflows/${name}.md`), STRICT_NOTE, `${name} keeps the strict lane note`);
     }
   });
 
