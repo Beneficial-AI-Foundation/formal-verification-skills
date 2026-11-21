@@ -132,6 +132,9 @@ runtime qualification or a whole-library verification result.
   step until its scope is settled (see Added), and shows `done` again only after the build check
   has run again.
 - The build check writes JSON only on stdout, so its output can be parsed as it stands.
+- The setup guide's tested matrix no longer names a pilot tuple that no real project uses. It
+  lists the tuple the rc3 run used, marked unverified until a recorded confined run, and says that
+  FVS does not choose your tools: your project pins its own Aeneas, Charon and Lean.
 
 ### Fixed
 

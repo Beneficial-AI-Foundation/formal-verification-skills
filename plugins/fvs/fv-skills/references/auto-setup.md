@@ -224,7 +224,7 @@ Aeneas and Charon come in one release archive per CPU and OS (asset names look l
 the Lean backend: unpack all of it, not just the two executables. Put it under
 `.aeneas/releases/<rev>/<platform>/` in your project, or put `aeneas` and `charon` on PATH. `<rev>` is the
 exact string your project pins (the `rev` in `lakefile.toml` or its `inputRev` in `lake-manifest.json`; a
-release tag such as `nightly-2026.09.30-0855ce1` or a commit hash) and `<platform>` is your host's target
+release tag such as `nightly-2026.11.09-5a392f4` or a commit hash) and `<platform>` is your host's target
 triple, which the first line of the profile prints. Charon works against one Rust nightly: the
 `rust-toolchain` file in the archive names it and `charon toolchain-version` prints it. Make sure
 `rustup toolchain list` shows it before you extract.
@@ -594,7 +594,7 @@ probe-aeneas inventory, on the rows below. No other auto-track operation has a r
 |---|---|---|---|---|
 | confined probe-aeneas inventory | aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0 | aarch64-apple-darwin | sandbox-exec | recorded confined run |
 | confined probe-aeneas inventory | aeneas-6e167c9b-charon-0.1.225-lean-v4.31.0 | x86_64-unknown-linux-gnu | bubblewrap | recorded confined run |
-| Pilot tuple, any operation | Aeneas nightly-2026.09.30-0855ce1, Charon 0.1.274, Lean 4.31.0 | any | none | unverified until a recorded confined run |
+| Rc3 run tuple, any operation | Aeneas nightly-2026.11.09-5a392f4, Charon 0.1.315, Lean 4.35.0 | any | none | unverified until a recorded confined run; build-level evidence only |
 
 The tuple is Aeneas 6e167c9b, Charon 0.1.225 and Lean 4.31.0, run with probe-aeneas v0.20.0 and tested with Beneficial-AI-Foundation/curve25519-dalek-lean-verify@0a22c281a9a14b6465a5473c200c7d3f1ac92df8.
 
@@ -602,7 +602,14 @@ Recorded helpers for the confined probe-aeneas inventory on aarch64-apple-darwin
 
 Recorded helpers for the confined probe-aeneas inventory on x86_64-unknown-linux-gnu: probe-rust 0.11.0, scip version v0.10.0, probe-lean 0.14.0, rust-analyzer 1.98.1 (48a229c 2026-09-01), with the rust-analyzer and rust-src components.
 
-The pilot tuple is the combination the first real target project uses. It stays unverified until a
-confined run is recorded against it and it is added to `TESTED_TUPLES` in a reviewed change.
+The rc3 run tuple is Aeneas `nightly-2026.11.09-5a392f4` (commit `5a392f4b80a4d0d05abc240eb2a7fa70622a9a35`),
+Charon 0.1.315 and Lean 4.35.0, on Rust `nightly-2026-09-17`. It is the tuple that the libcrux-verify project
+pins, and the project's recorded extraction names it (Aeneas `nightly-2026.11.09-5a392f4`, Charon 0.1.315, run
+on `aarch64-apple-darwin`). It is also the newest Aeneas revision on Lean 4.35.x: the next Aeneas commit moves
+to Lean 4.36. What is recorded against it is that extraction and three clean-copy `lake build --wfail` runs on
+Lean 4.35.0. No confined probe-aeneas inventory, no probe run and no Lean graph step is recorded for it, so it
+stays unverified until a confined run is recorded against it and it is added to `TESTED_TUPLES` in a reviewed
+change. The earlier pilot tuple (Aeneas `nightly-2026.09.30-0855ce1`, Charon 0.1.274, Lean 4.31.0) is not the
+rc3 tuple and is no longer listed.
 
-Linux x86_64 is not validated for FVS extraction or acceptance, even though official binaries exist and the confined probe-aeneas inventory has a recorded run there. One probe run never qualifies the whole auto track. Everything else is unsupported: other platforms, other tuples and every other operation.
+Linux x86_64 is not validated for FVS extraction or acceptance, even though official binaries exist and the confined probe-aeneas inventory has a recorded run there. One probe run never qualifies the whole auto track. FVS does not choose your tools: your project pins its own Aeneas, Charon and Lean. A combination that is not listed here shows as `available-but-unverified`, and setup and extraction go on. The extraction engine's path parser was written against real Charon 0.1.315 output. No other platform, tuple or operation has a recorded run.

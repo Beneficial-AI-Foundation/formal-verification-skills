@@ -298,18 +298,23 @@ describe('auto-setup reference: tested matrix', () => {
     }
   });
 
-  it('names the pilot tuple and labels it unverified until a recorded run', () => {
-    assert.ok(!tested.some((tuple) => tuple.charonVersion === '0.1.274' || tuple.aeneasRev.startsWith('0855ce1')),
-      'the pilot tuple is now in TESTED_TUPLES: update the reference and this test');
-    const row = sentences(section(raw, 'Tested matrix')).find((candidate) => candidate.includes('nightly-2026.09.30-0855ce1'));
-    assert.ok(row, 'pilot tuple row');
-    for (const fragment of ['Charon 0.1.274', 'Lean 4.31.0', 'unverified']) assert.ok(row.includes(fragment), fragment);
-    assert.doesNotMatch(row, /supported-and-tested|\btested\b/);
+  it('names the rc3 run tuple and labels it unverified, with build-level evidence only, until a recorded run', () => {
+    assert.ok(!tested.some((tuple) => tuple.charonVersion === '0.1.315' || tuple.aeneasRev.startsWith('5a392f4')),
+      'the rc3 run tuple is now in TESTED_TUPLES: update the reference and this test');
+    const matrix = section(raw, 'Tested matrix');
+    const row = sentences(matrix).find((candidate) => candidate.startsWith('|') && candidate.includes('nightly-2026.11.09-5a392f4'));
+    assert.ok(row, 'rc3 run tuple row');
+    for (const fragment of ['Charon 0.1.315', 'Lean 4.35.0', 'unverified', 'build-level evidence only']) assert.ok(row.includes(fragment), fragment);
+    assert.doesNotMatch(row, /supported-and-tested|\btested\b|confined probe-aeneas inventory/);
+    assert.ok(!matrix.split('\n').some((line) => line.startsWith('|') && line.includes('0855ce1')), 'the earlier pilot tuple is no longer listed');
   });
 
-  it('states that Linux is not validated for extraction or acceptance and that everything else is unsupported', () => {
+  it('states that Linux is not validated, that FVS does not choose the tools, and that nothing else has a recorded run', () => {
     assert.match(doc, /Linux x86_64 is not validated for FVS extraction or acceptance/);
-    assert.match(doc, /Everything else is unsupported/);
+    assert.match(doc, /FVS does not choose your tools: your project pins its own Aeneas, Charon and Lean/);
+    assert.match(doc, /A combination that is not listed here shows as `available-but-unverified`, and setup and extraction go on/);
+    assert.match(doc, /No other platform, tuple or operation has a recorded run/);
+    assert.doesNotMatch(doc, /Everything else is unsupported/);
   });
 
   it('never claims Linux support beyond the confined probe inventory', () => {
