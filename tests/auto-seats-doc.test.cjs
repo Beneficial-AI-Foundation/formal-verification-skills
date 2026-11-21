@@ -192,9 +192,14 @@ describe('seat reference', () => {
       assert.match(body, /needs no work packet, start marker, assignment or `ao` command/);
       assert.match(body, /Preserve the work and the evidence first/);
       assert.match(body, /Do not delete or reset the worktree/);
-      assert.match(body, /Stop the worker through your environment \(the "Stop a worker" row of the capability table\)/);
+      assert.match(body, /Stop the worker, and the commands it launched, through your environment \(the "Stop a worker" row of the capability table\)/);
       assert.match(body, /Establish that it has stopped before you start a replacement/);
-      assert.match(body, /treat the worker as still running: start no replacement and tell the owner/);
+      // Only the environment's own successful completion is stop evidence; no read of the worktree stands in for it.
+      assert.match(body, /Only your environment's documented, successful completion of stopping the worker and the work it launched counts/);
+      assert.match(body, /A request that was acknowledged, or a session status that is ambiguous, is not enough/);
+      assert.match(body, /Reads of the worktree \(`git status`, the head\) may help you keep the handoff, but they are not evidence of a stop/);
+      assert.doesNotMatch(body, /worktree twice|short time apart|expect no change/, 'no read of the worktree is a required stop check');
+      assert.match(body, /treat the worker as still running: start no replacement and tell the owner which capability is missing/);
       assert.match(body, /same worker limit and the same selected budget/);
       assert.match(body, /does not reset the original task start, the budget or the history/);
       assert.match(body, /Never signal a process id copied from output or evidence/);

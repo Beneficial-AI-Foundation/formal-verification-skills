@@ -54,12 +54,15 @@ your environment"). It needs no work packet, start marker, assignment or `ao` co
 1. Preserve the work and the evidence first. Write down the worker's exact goal, branch and head,
    what it tried and what failed. Keep its worktree with its uncommitted changes and its evidence
    files. Do not delete or reset the worktree.
-2. Stop the worker through your environment (the "Stop a worker" row of the capability table). Never
-   signal a process id copied from output or evidence.
-3. Establish that it has stopped before you start a replacement: read the session's status in your
-   environment and read the worktree twice a short time apart (`git status` and the head), and
-   expect no change. If you cannot establish it, treat the worker as still running: start no
-   replacement and tell the owner what you could not establish.
+2. Stop the worker, and the commands it launched, through your environment (the "Stop a worker" row
+   of the capability table). Never signal a process id copied from output or evidence.
+3. Establish that it has stopped before you start a replacement. Only your environment's documented,
+   successful completion of stopping the worker and the work it launched counts. A request that was
+   acknowledged, or a session status that is ambiguous, is not enough, and neither is a read of the
+   worktree: a launched command can keep writing, and a compiler can write ignored files. Reads of the
+   worktree (`git status`, the head) may help you keep the handoff, but they are not evidence of a
+   stop. If your environment gives no such completion, treat the worker as still running: start no
+   replacement and tell the owner which capability is missing.
 4. Start the replacement with a fresh brief that carries the ownership map, the same worker limit and
    the same selected budget, and the handoff of step 1. A replacement does not reset the original
    task start, the budget or the history, and it takes over only the items the map gives it. Take over

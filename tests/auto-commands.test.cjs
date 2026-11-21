@@ -233,10 +233,15 @@ describe('auto-init setup state', () => {
     const state = JSON.parse(fs.readFileSync(stateFile(root), 'utf8'));
     assert.deepEqual(state.profile.items.map((item) => item.id), ['host', 'rust', 'lean', 'aeneas', 'probe']);
     // The read runs under the same PATH as the init, and the test proves that the PATH has no ao: the
-    // helper keeps /usr/bin and /bin, so a machine with an ao there would make this test say so.
+    // helper keeps /usr/bin and /bin, so a machine with an ao there would make this test say so. The lookup
+    // must have run and ended with the shell's own not-found status, so a failure to launch it is no proof.
     const view = run(() => {
       const lookup = spawnSync('/bin/sh', ['-c', 'command -v ao'], { env: { PATH: process.env.PATH }, encoding: 'utf8' });
-      assert.notEqual(lookup.status, 0, `ao resolves on the stub PATH: ${lookup.stdout}`);
+      assert.equal(lookup.error, undefined, `the lookup did not launch: ${lookup.error}`);
+      assert.notEqual(lookup.status, null, `the lookup ended on signal ${lookup.signal}`);
+      // `command -v` reports a name it cannot find as 1 in bash and 127 in dash; any other status is not "absent".
+      assert.ok([1, 127].includes(lookup.status), `ao resolves on the stub PATH or the lookup failed (status ${lookup.status}): ${lookup.stdout}${lookup.stderr}`);
+      assert.equal(lookup.stdout, '', 'the lookup printed no path');
       return auto.readState({ projectRoot: root });
     }, bin);
     assert.equal(view.code, 'ok');
