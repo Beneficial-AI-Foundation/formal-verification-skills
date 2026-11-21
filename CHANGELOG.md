@@ -49,13 +49,27 @@ on release day. -->
   folder, the extraction folders) changed since the merged spec, so a proof worker cannot weaken
   what the owner approved. A Lean program also compares what each recalled statement rests on
   with the merged spec: a helper, notation or instance in a proof file that changes what an
-  unchanged statement means is refused. A new axiom passes only when it is in `formal/trusted`
-  and asserts exactly the proposition of its accepted record. A build with no spec base is not an
-  acceptance: it prints `built, integrity not checked` and exits non-zero.
+  unchanged statement means is refused. A hand-written axiom whose type is a proposition that a
+  statement rests on must be in `formal/trusted`, cite one accepted record and state exactly that
+  record's proposition; an axiom of the merged spec whose record is tied to no frozen proposition
+  stays allowed while it is unchanged. A build with no spec base is not an acceptance: it prints
+  `built, integrity not checked` and exits non-zero.
   <!-- rc3-fill: confirm the flag name, the frozen list and the exit status against the guards -->
 - The build check refuses a spec, proof or extraction file that Lake does not build, such as a
-  file that no `lean_lib` glob covers, in either lakefile format.
+  file that no `lean_lib` glob covers, in either lakefile format. Lake itself is asked which
+  files it compiled. A Lake path package inside the repository must be the merged spec's own,
+  file for file.
   <!-- rc3-fill: confirm the refusal message and the exit status -->
+- The build check refuses a project file or lakefile that names `debug.skipKernelTC` or
+  `addDeclWithoutChecking`, before any build. A `native_decide` or `bv_decide` axiom is refused
+  when it is new since the merged spec, and kept and flagged when a statement already rested on it
+  there, with or without an allowed-axioms list.
+- When an extraction stitched one crate to another, the build check holds each stitched file to
+  the digest and Lean check that the extraction recorded for it, and to Lake having compiled it.
+  The receipt lists those checks, and the engine counts the receipt only while the recorded
+  extraction holds the same ones.
+- The trust section of a proof pull request says `not accepted (reason)` for a build-check receipt
+  that the engine does not count, and still lists the axioms.
 - In a multi-crate run the engine writes a list of allowed axioms and the build check takes it
   with `--allow-axioms FILE`: a statement passes only when every axiom it rests on, beyond Lean's
   three, is named in the list by its full name as Lean reports it. A statement that rests on an
