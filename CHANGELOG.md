@@ -13,37 +13,43 @@ npm `next` tag only, and stable 2.3.x stays `latest`. Identify the release by th
 `v3.0.0-rc3` and its full commit SHA. This entry does not claim catalog publication, complete
 runtime qualification or a whole-library verification result.
 
-<!-- rc3-fill: skeleton. Every comment starting "rc3-fill" must be gone, and every bullet checked
-against the merged lane commits, before the release. Must-have bullets come first under each
-heading. Nice-to-have bullets stay only when their change is on the release branch at the
-freeze. Write plain words: no ticket numbers, lesson IDs or planning names. Re-date the heading
-on release day. -->
-
 ### Added
 
-<!-- rc3-fill: must-have, multi-crate extraction -->
-- Extraction accepts a target repository with several crates. Every crate inside the repository is
-  a verification target: it is extracted, and patched when needed, like the main crate, and one
-  Charon run per crate gives each its own LLBC. Only a crate that comes from outside the
-  repository (crates.io or another repository) stays external and opaque, recorded with its
-  pinned version.
-- When a crate inherits from its workspace, the repository root is the extraction root and the
-  member crates are inputs. `check` and `prepare` refuse such a crate when no input has a
-  `[workspace]` table, and show the cargo error. A hyphenated crate name where Charon's
-  underscored name is needed is reported before Charon runs. An LLBC from another tree is still
-  refused. <!-- rc3-fill: confirm each sentence against the extraction commits -->
-- The crates of one repository are extracted in dependency order, and their imports are stitched.
-  When a crate uses an item that another crate in the repository already translates, the generated
-  Lean imports that crate's module in place of an assumed axiom, so a proof about the main crate
-  rests on the proved library crate and not on an assumption. Only items from outside the
-  repository stay as external axioms. <!-- rc3-fill: confirm the order, what is stitched, any
-  duplicate-declaration check and the exact refusal messages against the stitching commits; delete
-  this bullet if stitching is not on the branch at the freeze -->
-- `Cargo.lock` is a recorded generated input: it is generated or read, hashed into the extraction
-  record and checked on restore. It is never required to be committed in the target repository.
-  <!-- rc3-fill: confirm who generates the lock, and the --locked and untracked-lock rules -->
+- **Several crates in one run.** Extraction accepts a repository with several crates. Every crate of
+  the repository that has a library is a verification target, unless you decide at `/fvs:auto-init`
+  that it is not; the default is all of them. Each target is extracted, and patched when needed,
+  with its own Charon run and its own LLBC. Only a crate that comes from outside the repository
+  (crates.io or another repository) stays external and opaque, recorded with its pinned version. The
+  patch engine's `crates` command lists the crates of a checkout in dependency order, providers
+  first, and names the symbolic links a build might read.
+- **Import stitching.** When a crate uses an item that another target crate translates, the
+  generated Lean imports that crate's module instead of assuming an axiom, so a proof about one crate
+  rests on the proved translation of the other. A crate that uses another target without being
+  stitched to it stops the extraction, and the message names both crates. A label such as an import
+  does not count as a stitch: it must name the Lean modules and the digest of the provider's
+  publication. Items from outside the repository stay external axioms. Each axiom that stitching
+  leaves or exposes needs an externals record, open until you decide, and so does each crate you
+  chose not to verify.
+- **Large workspaces and the lock.** When a crate inherits from its workspace, the repository root
+  is the extraction root and the member crates are inputs. `check` and `prepare` refuse such a crate
+  when no input has a `[workspace]` table, and show the cargo error. For a workspace much larger
+  than its targets, `trim-workspace` prints the patches that cut it down, and writes nothing until
+  you agree. A symbolic link the build might read is refused; after your yes you can list it as a
+  link the build does not read. `Cargo.lock` is a recorded generated input: it is read, or
+  generated inside the copy (`--lock update`, with your agreement), hashed into the extraction record
+  and checked on restore. The target repository never has to commit it.
+- **The proof phase goes crate by crate.** Crates are accepted one at a time, providers first, and a
+  crate that depends on another counts as accepted only after the other. A crate the extraction only
+  assumes keeps the run from being done until you record your decision about it.
+- **The scope is recorded.** Whether a run is one crate or several is recorded when extraction
+  prepares the copy, and an unknown scope is never read as one crate. A run recorded by 3.0.0-rc2
+  has no scope, so it stays at the extraction step. If its repository holds one library crate,
+  `record-scope` settles it from the commit the extraction was made from, after your yes, without
+  extracting again. If the repository holds several, extract again.
+- **A replaced extraction record leaves a backup.** When `/fvs:auto-extract` replaces an extraction
+  record that cannot be read, it keeps the state file as it was beside it, as `state.json.<time>.bak`,
+  and changes nothing else in the state.
 
-<!-- rc3-fill: must-have, the two build-check integrity guards -->
 - `scripts/fvs-build-check.mjs --spec-base SHA` refuses the build when a recalled statement or a
   frozen path (the lakefile, the manifest, `lean-toolchain`, the spec definitions, the trusted
   folder, the extraction folders) changed since the merged spec, so a proof worker cannot weaken
@@ -54,12 +60,10 @@ on release day. -->
   record's proposition; an axiom of the merged spec whose record is tied to no frozen proposition
   stays allowed while it is unchanged. A build with no spec base is not an acceptance: it prints
   `built, integrity not checked` and exits non-zero.
-  <!-- rc3-fill: confirm the flag name, the frozen list and the exit status against the guards -->
 - The build check refuses a spec, proof or extraction file that Lake does not build, such as a
   file that no `lean_lib` glob covers, in either lakefile format. Lake itself is asked which
   files it compiled. A Lake path package inside the repository must be the merged spec's own,
   file for file.
-  <!-- rc3-fill: confirm the refusal message and the exit status -->
 - The build check refuses a project file or lakefile that names `debug.skipKernelTC` or
   `addDeclWithoutChecking`, before any build. A `native_decide` or `bv_decide` axiom is refused
   when it is new since the merged spec, and kept and flagged when a statement already rested on it
@@ -68,46 +72,47 @@ on release day. -->
   the digest and Lean check that the extraction recorded for it, and to Lake having compiled it.
   The receipt lists those checks, and the engine counts the receipt only while the recorded
   extraction holds the same ones.
+- In a run over several crates the engine writes a list of allowed axioms with one section for each
+  crate (`allowed-axioms`), and the build check takes it with `--allow-axioms FILE`: a statement
+  passes only when every axiom it rests on, beyond Lean's three, is named in the list by its full
+  name as Lean reports it. A statement that rests on an axiom about a function of another targeted
+  crate does not pass.
 - The trust section of a proof pull request says `not accepted (reason)` for a build-check receipt
   that the engine does not count, and still lists the axioms.
-- In a multi-crate run the engine writes a list of allowed axioms and the build check takes it
-  with `--allow-axioms FILE`: a statement passes only when every axiom it rests on, beyond Lean's
-  three, is named in the list by its full name as Lean reports it. A statement that rests on an
-  axiom about a function of another targeted crate does not pass.
-  <!-- rc3-fill: delete this bullet if the engine's allowed-axioms command is not on the branch at
-  the freeze -->
 
-
-<!-- rc3-fill: must-have, init permission check and permissions page -->
-- `/fvs:auto-init` checks permissions before the run. It sends a harmless worker message, makes
-  one author edit and build, and finds the other run steps that would prompt: draft pull request
-  create and edit, a push to the project's own repository, fetch and `ls-remote`. With your yes it
-  writes a minimal project allowlist. It never allows GitHub comments, reviews or a push to
-  upstream. Run status says when the run waits for your approval.
+- `/fvs:auto-init` checks permissions before the run, while you are at the keyboard. It sends a
+  harmless worker message, makes one author edit and build, reads pull requests, runs `git
+  ls-remote` and `git fetch`, and runs the push command with a branch name that cannot exist, so
+  nothing is pushed. You tell it which steps stopped and asked; with your yes it writes a minimal
+  project allowlist for those steps. It never writes a rule for a GitHub comment or review, for
+  marking a pull request ready, for a merge, or for a plain `git push`. It does not check pull
+  request creation or editing: approve those yourself. The init summary has a `Permissions:` line
+  that names the steps that will wait for your approval.
 - Workers and the orchestrator push with one command, `scripts/fvs-auto-push.mjs --branch
   fvs/<name>`. It pushes that one branch to the destination that `/fvs:auto-init` recorded and
   refuses a branch outside the recorded namespace, a changed destination, and a git setting that
   would rewrite the destination. It skips repository hooks, drops git environment variables that
   could redirect a push (you can confirm a few by name at init), and keeps tokens out of every
   message and receipt, including user information in a remote address. The allowlist names this
-  command and writes no rule for a plain `git push`, because a glob cannot allow a push safely.
-  Init tells you when a rule of your own already allows a plain `git push`.
-  <!-- rc3-fill: confirm the refusal list, the init notice and the token limits against the push
-  command and its page; the opt-in push hook never shipped in a release, so it gets no line of its
-  own -->
+  command and writes no rule for a plain `git push`, because a glob cannot allow a push safely. If
+  your project settings already allow a plain `git push` by rule, init stops before it writes
+  anything and lists those entries for you to delete.
+- A permissions page, `fv-skills/references/auto-permissions.md`, is linked from the README and read
+  by `/fvs:auto-init`. It gives allowlists for Claude Code and Codex, the reason for each rule, what
+  still prompts, and what the push command checks and does not stop. A section on unattended runs in
+  a sandbox says to use skip-permissions only in a sandbox or on a cloud machine, with a token limited
+  to the project's fork, a guard ahead of `gh` that refuses comments, reviews and merges, and branch
+  protection on the fork that applies to administrators too. The push command stays required in a
+  sandbox. The page names `/fewer-permission-prompts` as tuning after a first run.
 
-- A permissions page, linked from the README and printed when the check fails, gives allowlists
-  for Claude Code and Codex, the reason for each rule and what still prompts. It names
-  `/fewer-permission-prompts` as tuning after a first run. <!-- rc3-fill: confirm the page name and path -->
-
-<!-- rc3-fill: nice-to-haves, delete each bullet whose change is not on the branch at the freeze -->
 - `read-state --brief` prints a short run summary. `record-spec --commit SHA` hashes a spec file
-  from git objects instead of the working tree.
+  from git objects instead of the working tree. `list-items` lists the Rust functions that Aeneas
+  translated inside a scope you give.
 - The spec pull request lists the claims that need a model or an accepted assumption, so you can
   rule on them before the proofs start. The pull request trust section is generated from the run
   records (axioms and gaps for each statement) and checked against the registry. An open owner
   question is shown next to a pass.
-- Run overrides are recorded in the run state.
+- Run overrides are recorded in the run state, so a resumed run keeps them.
 - The guides say: take test vectors from the repository or an official source and add a negative
   control; build before you commit and keep the exit status; pass the installed FVS path and
   version to every worker; list the public API items and test the `recall` example; redirect a busy
@@ -115,28 +120,44 @@ on release day. -->
 
 ### Changed
 
-<!-- rc3-fill: must-have, permission check -->
 - The setup guide no longer says that FVS changes no permission settings. FVS writes a permission
   setting only after your yes.
-<!-- rc3-fill: keep the next bullet only if the files that make up the engine identity changed -->
 - The auto-track engine files changed since 3.0.0-rc2, so the engine identity differs from rc2.
   Keep one engine identity for the whole run and do not update the installation in the middle of
   one.
-<!-- rc3-fill: must-have, multi-crate extraction -->
 - The extraction guidance no longer says to keep `Cargo.lock` committed in the target repository.
-<!-- rc3-fill: must-have, build-check guards -->
 - The build check writes receipt version 2. The run counts an acceptance only from a version 2
   receipt that carries the Lean-level comparison, and stops counting it when an externals record
-  that the acceptance relied on changes. A run that finished under 3.0.0-rc2 shows `done` again
-  only after the build check runs again.
-<!-- rc3-fill: nice-to-have -->
+  that the acceptance relied on changes. A run recorded under 3.0.0-rc2 is back at the extraction
+  step until its scope is settled (see Added), and shows `done` again only after the build check
+  has run again.
 - The build check writes JSON only on stdout, so its output can be parsed as it stands.
 
 ### Fixed
 
-<!-- rc3-fill: nice-to-have, delete if the change is not on the branch at the freeze -->
-- The agreement hash snippet in `/fvs:auto-init` no longer makes four scripts crash at load when
-  they are fed on stdin.
+- Four auto-track scripts no longer crash at load when they are read from standard input, for
+  example by a hash snippet in `/fvs:auto-init`. The build check is held to the same cases by a test.
+
+### Not in this release, and known limits
+
+- The strict graph lane still handles one crate. For a repository with several target crates, accept
+  through the build check and do not start the strict lane for any of them.
+- A run over several crates that an earlier version recorded must be extracted again.
+  `record-scope` refuses such a run and says so.
+- `record-scope` rewrites the state file. A Lean graph record made over the earlier state is then
+  no longer bound to it, and the Lean run behind it repeats, so settle the scope before that run.
+- Stitching changes which axioms the theorems rest on. A project that pins its `#print axioms`
+  lists, or has hand-written trusted axioms about a function that is now translated, must regenerate
+  or replace them in its own Lean project. FVS never rewrites a pin; the next action names the work.
+- The push command is a cooperative guard with hardening and not a security boundary. It trusts your
+  git setup, ssh and transport wrappers, credential helpers, and anything that runs as your user.
+  Protect the main branches of the project fork. In a remote address, only the secret is removed from
+  what git prints: a user name that sits next to a different real password stays readable, and a
+  very short secret can make a message look garbled. A timeout during a push is reported as
+  `push-outcome-unknown` and has no test. How Claude Code and Codex split a compound command was
+  read from their documentation and not observed.
+- The permission check shows which steps prompted in your session. It does not predict every
+  command the run uses later.
 
 ## [3.0.0-rc2] - 2026-11-17
 
