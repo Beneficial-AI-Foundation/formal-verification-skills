@@ -1479,6 +1479,56 @@ describe('the allowed axioms', () => {
       assert.deepEqual(idle.json.integrity.semantic.bindings, []);
       assert.equal(without(resting([EXTERNAL])).status, 0);
     });
+
+    // An assumption record covers several contract axioms and is tied to no frozen proposition: the axioms of the
+    // merged spec that cite it were approved by the spec merge, so they are kept (and bound with no proposition) as
+    // long as each is in Trusted, cites that one accepted record and is unchanged; a new one citing it is refused.
+    describe('several merged-spec axioms that cite one assumption record tied to no frozen proposition', () => {
+      const ASSUMED = ['Trusted.hacl_a', 'Trusted.hacl_b', 'Trusted.hacl_c'];
+      const ASSUMPTION = RECORD[ABOUT_TARGET];
+      const side = ({ names, cites = ASSUMPTION, type = {} }) => leanDump({
+        recalls: { 'Dep.foo': { axioms: ['propext', 'Classical.choice', 'Quot.sound', ...names] } },
+        docs: names.map((name) => ({ name, m: 'Trusted.Gaps', cites: cites === null ? [] : [cites], axiom: true })),
+        constants: [constant('Dep.foo', { k: 'thm', t: 'a statement', v: undefined }), ...names.map((name) => constant(name, { k: 'axiom', m: 'Trusted.Gaps', t: type[name] ?? `a proposition about ${name}`, v: undefined, pr: true }))],
+      });
+      const pair = ({ base = ASSUMED, head = ASSUMED, cites, headType } = {}) => ({ base: side({ names: base }), head: side({ names: head, cites, type: headType }) });
+      const kindsOf = (result) => [...new Set(result.json.integrity.problems.map((problem) => problem.kind))];
+
+      test('are accepted, bound with no proposition, and their record is one the receipt depends on', () => {
+        const result = without(pair());
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(result.json.integrity.semantic.bindings, ASSUMED.map((axiom) => ({ axiom, record: ASSUMPTION, proposition: null })));
+        assert.deepEqual(result.json.externals.records.map((entry) => entry.id), [ASSUMPTION]);
+      });
+
+      test('are still held to Trusted, to one accepted record and to being unchanged', () => {
+        const uncited = without(pair({ cites: null }));
+        assert.equal(uncited.status, 1, uncited.stderr);
+        assert.deepEqual(kindsOf(uncited), ['trusted-axiom-unbound']);
+        assert.match(problemOf(uncited, 'trusted-axiom-unbound').detail, /must cite exactly one accepted externals record in its docstring \(it cites 0\)$/);
+        const unaccepted = without(pair({ cites: 'gap-open' }));
+        assert.equal(unaccepted.status, 1, unaccepted.stderr);
+        assert.match(problemOf(unaccepted, 'trusted-axiom-unbound').detail, /\(it cites 0\)$/);
+        const changed = without(pair({ headType: { 'Trusted.hacl_b': 'a different proposition' } }));
+        assert.equal(changed.status, 1, changed.stderr);
+        assert.deepEqual(kindsOf(changed), ['axiom-changed']);
+        assert.equal(problemOf(changed, 'axiom-changed').statement, 'Trusted.hacl_b');
+      });
+
+      test('are refused outside Trusted whatever the record says', () => {
+        const outside = (result) => { assert.equal(result.status, 1, result.stderr); assert.deepEqual(kindsOf(result), ['prop-axiom-outside-trusted']); };
+        const dump = pair();
+        const elsewhere = (text) => text.replaceAll('Trusted.Gaps', 'Extraction.Out');
+        outside(without({ base: elsewhere(dump.base), head: elsewhere(dump.head) }));
+      });
+
+      test('do not excuse a new axiom that cites the same record', () => {
+        const fresh = without(pair({ head: [...ASSUMED, 'Trusted.hacl_new'] }));
+        assert.equal(fresh.status, 1, fresh.stderr);
+        assert.deepEqual(kindsOf(fresh), ['trusted-axiom-unbound']);
+        assert.match(problemOf(fresh, 'trusted-axiom-unbound').detail, /the record gap-sha2 is tied to 0 propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom Trusted\.hacl_new has nothing to assert$/);
+      });
+    });
   });
 
   test('an empty list allows only the three standard axioms', () => {
@@ -1792,7 +1842,7 @@ describe('the Lean program: what runs, and what an unusable run means', () => {
     assert.deepEqual(semantic.bindings, [{ axiom: 'Gap.div_spec', record: 'gap-div', proposition: 'Div' }]);
     assert.deepEqual(semantic.statements.map((s) => [s.name, s.declaration, s.constants]), [['Dep.foo', 'Dep.foo', 2]]);
     assert.deepEqual(semantic.dumps, { base: sha256(dump.base), head: sha256(dump.head) });
-    assert.match(result.stderr, /Lean check \(Lean \(version 4\.35\.0, stub\)\): recalled declarations compared: 1 \(2 project constants\); new Trusted axioms bound to their records: 1/);
+    assert.match(result.stderr, /Lean check \(Lean \(version 4\.35\.0, stub\)\): recalled declarations compared: 1 \(2 project constants\); Trusted axioms bound to their records: 1/);
     assert.deepEqual(result.json.externals.records.map((r) => r.id), ['gap-div']);
   });
 
@@ -2391,6 +2441,43 @@ describe('real Lean: a statement that still reads the same but does not mean the
       const other = realCheck(project('Accepted assumption, `gap-add`.', '∀ n : Nat, n + 0 = n'));
       assert.equal(other.status, 1, other.stderr);
       assert.ok(other.json.integrity.problems.some((problem) => problem.kind === 'trusted-axiom-unbound' && /asserts something that is not one proposition, but the record gap-add is tied to the proposition Gap/.test(problem.detail)), other.stderr);
+    });
+  });
+
+  // An assumption record can cover several contract axioms and be tied to no frozen proposition. The axioms of the
+  // merged spec that cite it were approved by the spec merge: they are kept and bound with no proposition, while a
+  // new axiom that cites the same record stays refused.
+  describe('merged-spec axioms that cite one accepted record tied to no frozen proposition', () => {
+    const note = (name, type) => `/-- Accepted assumption, \`gap-note\`. -/\naxiom ${name} : ${type}\n`;
+    const notes = (...extra) => ['', note('Fx.note_a', '(1 : Nat) = 1'), note('Fx.note_b', '(2 : Nat) = 2'), ...extra].join('\n');
+    const guard = (axioms) => `/-- 'Fx.foo_spec' depends on axioms: [${axioms}] -/\n#guard_msgs (whitespace := lax, substring := true) in\n#print axioms Fx.foo_spec\n`;
+    const externals = EXTERNALS(record({ id: 'gap-add' }), record({ id: 'gap-note' }));
+    // The statement says what it rests on: one fact per axiom; the merged spec holds the first two axioms.
+    const layout = ({ statement, imports = '', proof, axioms }) => ({
+      'Fx/Proofs/P.lean': `import Fx.Trusted.Notes\n${imports}\ntheorem Fx.foo_spec : ${statement} := ${proof}\n`,
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n${guard(axioms)}`,
+    });
+    const baseFor = (statement) => ({
+      'Fx/Trusted/Notes.lean': notes(),
+      'Fx/Proofs/P.lean': `import Fx.Trusted.Notes\n\ntheorem Fx.foo_spec : ${statement} := by\n  sorry\n`,
+      'Fx/Specs/A.lean': `import Fx.Proofs.P\n\nrecall Fx.foo_spec : ${statement}\n\n#print axioms Fx.foo_spec\n`,
+    });
+
+    test('are accepted, and the receipt binds them to their record with no proposition', () => {
+      const statement = '(1 : Nat) = 1 ∧ (2 : Nat) = 2';
+      const result = realCheck(realProject(layout({ statement, proof: '⟨Fx.note_a, Fx.note_b⟩', axioms: 'Fx.note_a, Fx.note_b' }), { externals, baseFiles: baseFor(statement) }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.json.integrity.semantic.bindings, ['Fx.note_a', 'Fx.note_b'].map((axiom) => ({ axiom, record: 'gap-note', proposition: null })));
+      assert.deepEqual(result.json.externals.records.map((entry) => entry.id), ['gap-note']);
+    });
+
+    test('do not excuse a new axiom that cites the same record', () => {
+      const statement = '(1 : Nat) = 1 ∧ (2 : Nat) = 2 ∧ (3 : Nat) = 3';
+      const head = { ...layout({ statement, imports: 'import Fx.Trusted.More\n', proof: '⟨Fx.note_a, Fx.note_b, Fx.note_c⟩', axioms: 'Fx.note_a, Fx.note_b, Fx.note_c' }), 'Fx/Trusted/More.lean': note('Fx.note_c', '(3 : Nat) = 3') };
+      const result = realCheck(realProject(head, { externals, baseFiles: baseFor(statement) }));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.json.integrity.problems.map((problem) => problem.kind), ['trusted-axiom-unbound'], result.stderr);
+      assert.match(result.json.integrity.problems[0].detail, /the record gap-note is tied to 0 propositions in the frozen spec of the merged spec; it must be tied to exactly one, so the axiom Fx\.note_c has nothing to assert$/);
     });
   });
 
