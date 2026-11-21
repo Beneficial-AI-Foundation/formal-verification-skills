@@ -283,23 +283,67 @@ describe('a real workspace of two crates', { skip: multi === null ? 'the extract
   });
 });
 
+const backupsOf = (root) => fs.readdirSync(path.dirname(fixtures.stateFile(root))).filter((name) => name.endsWith('.bak')).sort();
+const BACKUP_NAME = /^state\.json\.\d{4}-\d{2}-\d{2}T[\d-]+Z\.bak$/;
+
 describe('an extraction record that no longer reads', () => {
+  // A run that kept its roster but lost the rows of its crates: the extraction record no longer reads.
+  const unreadable = (before) => ({ ...before, extraction: { ...before.extraction, run: { ...before.extraction.run, order: ['demo'], roster: { main: 'demo' }, rosterSha256: '1'.repeat(64) } } });
+
   it('is replaced by extracting again, and nothing else in the state is touched', () => {
     const root = project();
     init(root);
     const { out } = copyOf(root, { attempt: true });
     assert.equal(record(root, out).code, 'recorded');
+    assert.deepEqual(backupsOf(root), [], 'an ordinary record keeps no backup');
     const before = readState(root);
-    // A run that kept its roster but lost the rows of its crates: the state does not read.
-    const broken = { ...before, extraction: { ...before.extraction, run: { ...before.extraction.run, order: ['demo'], roster: { main: 'demo' }, rosterSha256: '1'.repeat(64) } } };
-    fixtures.writeState(root, broken);
+    fixtures.writeState(root, unreadable(before));
     const unread = fixtures.cli('read-state', '--project-root', root);
     assert.equal(unread.json.code, 'malformed-state');
     assert.match(unread.json.nextStep, /rerun \/fvs:auto-extract/);
-    assert.equal(record(root, out).code, 'recorded');
+    assert.match(unread.json.nextStep, /kept beside it as .*state\.json\.<time>\.bak/);
+    assert.deepEqual(backupsOf(root), [], 'reading the state keeps no backup');
+    const result = record(root, out);
+    assert.equal(result.code, 'recorded');
     const after = readState(root);
     assert.equal(after.extraction.status, 'succeeded');
     assert.deepEqual({ ...after, extraction: null }, { ...before, extraction: null });
+    assert.match(result.message, /could not be read was replaced; the state file as it was is kept in /);
+  });
+
+  it('keeps the state file as it was in a timestamped backup beside it, and says where', () => {
+    const root = project();
+    init(root);
+    const { out } = copyOf(root, { attempt: true });
+    assert.equal(record(root, out).code, 'recorded');
+    fixtures.writeState(root, unreadable(readState(root)));
+    const bytes = fs.readFileSync(fixtures.stateFile(root));
+    const result = record(root, out);
+    const [name, ...others] = backupsOf(root);
+    assert.deepEqual(others, [], 'one backup for the one replacement');
+    assert.match(name, BACKUP_NAME);
+    assert.equal(result.backup, path.join(path.dirname(fixtures.stateFile(root)), name));
+    assert.ok(result.message.includes(result.backup), 'the message names the backup');
+    assert.deepEqual(fs.readFileSync(result.backup), bytes, 'the backup holds the unreadable state byte for byte');
+    assert.notDeepEqual(fs.readFileSync(fixtures.stateFile(root)), bytes);
+    // Replacing a record that now reads, as an ordinary rerun does, keeps no further backup.
+    assert.equal(record(root, out).code, 'recorded');
+    assert.deepEqual(backupsOf(root), [name]);
+    assert.equal(record(root, out).backup, undefined);
+  });
+
+  it('keeps the backup also when the extraction recorded in its place failed', () => {
+    const root = project();
+    init(root);
+    const { out } = copyOf(root, { attempt: true });
+    assert.equal(record(root, out).code, 'recorded');
+    fixtures.writeState(root, unreadable(readState(root)));
+    const bytes = fs.readFileSync(fixtures.stateFile(root));
+    const { out: unfinished } = copyOf(root, { attempt: false, scope: SEVERAL });
+    assert.throws(() => record(root, unfinished), (error) => error.code === 'extraction-failed'
+      && BACKUP_NAME.test(path.basename(error.details.backup)) && error.message.includes(error.details.backup));
+    assert.equal(readState(root).extraction.status, 'failed');
+    assert.deepEqual(fs.readFileSync(path.join(path.dirname(fixtures.stateFile(root)), backupsOf(root)[0])), bytes);
   });
 
   it('is recorded again when it has no scope, as a record made before the scope was kept has none', () => {
@@ -315,6 +359,7 @@ describe('an extraction record that no longer reads', () => {
     assert.match(held.json.nextAction, /^Rerun \/fvs:auto-extract: the recorded extraction does not say whether it is of a single crate or of several/);
     assert.equal(record(root, out).code, 'recorded');
     assert.notEqual(fixtures.cli('read-state', '--project-root', root).json.phase, 'extract');
+    assert.deepEqual(backupsOf(root), [], 'a record that reads is replaced as before, with no backup');
   });
 
   it('is not replaced when the state has another fault', () => {
@@ -326,7 +371,10 @@ describe('an extraction record that no longer reads', () => {
     state.extraction.run.units = [];
     state.choices = null;
     fixtures.writeState(root, state);
+    const bytes = fs.readFileSync(fixtures.stateFile(root));
     assert.throws(() => record(root, out), (error) => error.code === 'malformed-state' && !/rerun \/fvs:auto-extract/.test(error.details.nextStep));
+    assert.deepEqual(fs.readFileSync(fixtures.stateFile(root)), bytes, 'the state file is left as it was');
+    assert.deepEqual(backupsOf(root), []);
   });
 });
 
