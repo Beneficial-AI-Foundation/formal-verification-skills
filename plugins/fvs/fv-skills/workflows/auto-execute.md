@@ -1,5 +1,5 @@
 <purpose>
-For the AO orchestrator: after the owner has merged the spec pull request, have workers prove the
+For the orchestrator session: after the owner has merged the spec pull request, have workers prove the
 statements, let FVS's build check decide what is accepted, and open the proof pull request as a draft.
 The goal and the pipeline are fixed; how the workers get there is theirs to decide. Worker reports
 establish no proof acceptance. Without the orchestrator, reconcile the recorded state and report.
@@ -287,16 +287,16 @@ the human review bundle, driven by `fv-skills/references/auto-transitions.md` an
 disposition (`auto-execution.md`, `auto-resume.md`). The strict lane's human re-specification command is
 not available in 3.0.0-rc3; in this pipeline a spec refactor is a new draft pull request.
 
-## Step 1: Require Agent Orchestrator
+## Step 1: Locate the engine
 
 ```bash
 AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-execute." >&2
-  exit 1
-}
 ```
+
+This command runs in the orchestrator session: the agent session of your development environment that can
+start worker sessions, each in its own worktree, and message them (see `auto-seats.md`). FVS checks for no
+particular environment. A session that cannot start workers reports the recorded state and stops without
+writes.
 
 ## Step 2: Read the recorded state
 

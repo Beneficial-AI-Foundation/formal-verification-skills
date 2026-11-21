@@ -1216,10 +1216,14 @@ describe('auto command and workflow text', () => {
     }
   });
 
-  it('every member requires the ao CLI and reads state only through the script', () => {
+  it('every member locates the engine, checks for no development environment and reads state only through the script', () => {
     for (const name of members) {
       const workflow = read(`fv-skills/workflows/${name}.md`);
-      assert.match(workflow, /command -v ao/, name);
+      const step1 = workflow.slice(workflow.indexOf('## Step 1: '), workflow.indexOf('## Step 2: '));
+      assert.match(step1, /^## Step 1: Locate the engine/, name);
+      assert.match(step1, /AUTO="\$HOME\/\.claude\/scripts\/fvs-auto\.mjs"/, name);
+      assert.match(step1, /FVS\s+checks\s+for\s+no\s+particular\s+(development\s+)?environment/, name);
+      assert.doesNotMatch(step1, /command -v|\bao\b|Agent Orchestrator|exit 1/, `${name} step 1 must not require a development environment's CLI`);
       assert.match(workflow, /"\$AUTO" read-state --project-root \./, name);
     }
   });

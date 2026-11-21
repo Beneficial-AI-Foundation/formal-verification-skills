@@ -1,5 +1,5 @@
 <purpose>
-For the AO orchestrator: turn the agreed scope into reviewed Lean statements, one draft pull request
+For the orchestrator session: turn the agreed scope into reviewed Lean statements, one draft pull request
 for the owner. The goal and the pipeline are fixed; how the agents get there is theirs to decide.
 Without the orchestrator, report the recorded state and stop without writes.
 </purpose>
@@ -211,16 +211,16 @@ automatically, so the orchestrator translates them once into exact Lean names an
 `--allow-axioms`. A plan made without a dependency graph is degraded: it exits 9, computes no closure
 and is never admissible, so plan again with `--graph` once the probes are installed.
 
-## Step 1: Require Agent Orchestrator
+## Step 1: Locate the engine
 
 ```bash
 AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-top-specs." >&2
-  exit 1
-}
 ```
+
+This command runs in the orchestrator session: the agent session of your development environment that can
+start worker sessions, each in its own worktree, and message them (see `auto-seats.md`). FVS checks for no
+particular environment. A session that cannot start workers reports the recorded state and stops without
+writes.
 
 ## Step 2: Read the recorded state
 

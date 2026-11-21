@@ -1,5 +1,5 @@
 <purpose>
-The AO orchestrator's single entry for the auto track: show the compatibility profile with every
+The orchestrator session's single entry for the auto track: show the compatibility profile with every
 stage's readiness up front, reuse a current applicable agreement, or settle only the missing scope,
 boundaries, conventions and execution choices with a short roadmap conversation, and record the
 agreement. A missing agreement is a warning, never a stop. The goal and the pipeline are fixed; how the
@@ -36,18 +36,14 @@ Agents may open draft pull requests and edit a pull request body. They never pos
 on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
 merges.
 
-## Step 1: Require Agent Orchestrator
+## Step 1: Locate the engine
 
 ```bash
 AUTO="$HOME/.claude/scripts/fvs-auto.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-init." >&2
-  exit 1
-}
 ```
 
-Stop when this fails. Agreement storage alone launches no workers.
+This command needs only an agent session in the project checkout; FVS checks for no particular
+development environment. Agreement storage alone launches no workers.
 
 ## Step 2: Inspect existing state and evidence before asking anything
 

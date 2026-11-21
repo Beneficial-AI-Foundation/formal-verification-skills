@@ -12,7 +12,7 @@ description: Write and adversarially review Lean statements for every public API
 </pi_package_runtime>
 
 <objective>
-For the AO orchestrator: after extraction, list every public API item in the agreed scope. Per Rust
+For the orchestrator session: after extraction, list every public API item in the agreed scope. Per Rust
 file, an author writes the statements and a fresh adversarial reviewer checks them (at most three
 rounds). Statements go in `formal/specs/Defs` and `formal/specs/Specs`, one file per Rust file, each
 restated with `recall` and a guarded `#print axioms` list; hand-written axioms go in `formal/trusted`.

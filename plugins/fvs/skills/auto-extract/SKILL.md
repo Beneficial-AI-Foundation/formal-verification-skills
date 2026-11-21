@@ -145,7 +145,7 @@ owner or the scripts have not decided.
 </codex_skill_adapter>
 
 <success_criteria>
-- [ ] Stops with an actionable message when `ao` is not on PATH or no setup state is recorded.
+- [ ] Stops with an actionable message when no setup state is recorded.
 - [ ] Stops on a legacy or mixed extraction mode; the command never migrates.
 - [ ] Extraction runs through `/fvs:aeneas-extract`, unchanged.
 - [ ] `record-extraction` runs after every extraction attempt, success or failure, with the copy, the build's real exit status and the shared extractor's final oracle verdict; a refused or unknown oracle is never recorded as success.
