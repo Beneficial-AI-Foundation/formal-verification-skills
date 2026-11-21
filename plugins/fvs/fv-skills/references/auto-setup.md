@@ -203,8 +203,9 @@ initialization has native Git side effects and needs its own explained setup per
 
 ## V2 run policy and runner boundary
 
-For a new v2 project, read `auto-execution.md` for optional budgets, optional memory, cancellation and
-small-proof progress/handoff. Your development environment may run locally or on a cloud host; no Linux-first
+For a new v2 project, read `auto-execution.md` for optional budgets and optional memory. For
+cancellation, replacement and small-proof progress, follow its "Cancel or replace a worker on the
+default route". Your development environment may run locally or on a cloud host; no Linux-first
 choice is imposed. Orchestration/research and pinned acquisition are network-enabled through the
 configured tools and grants. The profile below only detects tools.
 

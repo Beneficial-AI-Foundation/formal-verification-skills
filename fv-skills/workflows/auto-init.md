@@ -124,8 +124,8 @@ Record only the missing owner choices, using the current applicable evidence for
   separately from any delegated execution actions and limits.
 
 New choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and
-`memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress
-diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata,
+`memory:{mode:"disabled"|"beads"}`. For cancellation, replacement and small-proof progress diagnosis,
+follow `auto-execution.md`, "Cancel or replace a worker on the default route". There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata,
 not enforced; retain its original finite budget unchanged. Existing resource and spending limits are
 never raised or reset automatically. The initial owner agreement is the setup human gate. Later
 provisional specify/review/revise cycles are autonomous within it;

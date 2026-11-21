@@ -4,6 +4,13 @@
 Use this reference for a v2 project, checker request, work packet, progress observation or replacement.
 Read the actual recorded version first. New projects use v2; existing v1 projects keep their recorded
 choices, runtime, finite deadlines and receipt semantics. Reads do not migrate or rewrite them.
+
+Two routes read this page. The default route needs "Start and resume" for the run-policy choices,
+"Cancel or replace a worker on the default route", "Worker brief rules" and "Network and runner
+support". "Work and cancellation", "Periodic progress" and "Stop, reconcile and hand off" are
+operations of the optional strict lane only, which needs Agent Orchestrator in 3.0.0-rc3. They use
+work packets, start markers, assignments and `ao` observations that a default run never creates. Do
+not follow them to cancel or replace a worker of a default run.
 </overview>
 
 ## Start and resume
@@ -28,8 +35,9 @@ invocationId,execution}`. Resume and replacement retain the original policy and 
 
 With no selected budget, continue until completion, user/orchestrator cancellation or a genuine
 blocker. Elapsed age does not establish stale proof. Current source, tools, statements, semantic
-closure, dependencies, axioms, registry/store heads and CAS still must match. Administrative AO client RPCs, Git metadata reads and
-memory I/O have separately named finite limits; long build/proof work is not administrative.
+closure, dependencies, axioms, registry/store heads and CAS still must match. In the strict lane,
+administrative AO client RPCs, Git metadata reads and memory I/O have separately named finite limits;
+long build/proof work is not administrative.
 
 For disabled memory, the v2 coordinator request has `memoryRequest:null`, the runtime records the
 explicit disabled disposition, and workers use `fvs/auto-memory-disabled-request` version2. There is
@@ -37,7 +45,33 @@ no backend prime or substitute memory receipt. With Beads enabled, follow `auto-
 fresh request, canonical primary store/Git identity and actual prime/result checks remain mandatory.
 Local FVS-development memory is separate from a target project's chosen backend.
 
-## Work and cancellation
+## Cancel or replace a worker on the default route
+
+This is the whole procedure for a default run, for example a spec author, a reviewer or a prover. It
+uses your development environment's own controls (`auto-seats.md`, "What the orchestrator needs from
+your environment"). It needs no work packet, start marker, assignment or `ao` command.
+
+1. Preserve the work and the evidence first. Write down the worker's exact goal, branch and head,
+   what it tried and what failed. Keep its worktree with its uncommitted changes and its evidence
+   files. Do not delete or reset the worktree.
+2. Stop the worker through your environment (the "Stop a worker" row of the capability table). Never
+   signal a process id copied from output or evidence.
+3. Establish that it has stopped before you start a replacement: read the session's status in your
+   environment and read the worktree twice a short time apart (`git status` and the head), and
+   expect no change. If you cannot establish it, treat the worker as still running: start no
+   replacement and tell the owner what you could not establish.
+4. Start the replacement with a fresh brief that carries the ownership map, the same worker limit and
+   the same selected budget, and the handoff of step 1. A replacement does not reset the original
+   task start, the budget or the history, and it takes over only the items the map gives it. Take over
+   the old worker's changes only through the ordinary reviewed pipeline.
+
+For a small proof unit, roughly one hour unresolved prompts a look, not a kill: read the worker's
+report and its worktree for the exact goal, the last meaningful progress and the failed approaches.
+Useful progress can justify going on. A concrete missing lemma or a bad specification can justify
+acting earlier. The same blocker twice needs a changed approach (a decomposition, a helper lemma or an
+independent review of the specification) before another replacement with the same brief.
+
+## Work and cancellation (strict lane only)
 
 Use the normal startup acknowledgement, exact preparation, published delivery-after and exclusive
 work-start guard from `auto-transitions.md`. A start marker's v2 activation time records worker-entry
@@ -65,7 +99,7 @@ An exited parent with unsupported child pipes returns uncertain cleanup. Never s
 from evidence. Incomplete/changed/interrupted checks produce no new accepted proof; an event already
 atomically accepted before an observed stop remains part of history.
 
-## Periodic progress
+## Periodic progress (strict lane only)
 
 During active work, `next-transition` returns `observe-existing` scheduling facts without rechecking
 the complete proof store. It is not dispatch permission. The existing AO coordinator loop reads actual
@@ -87,7 +121,7 @@ A concrete missing lemma, bad specification or other blocker may justify earlier
 This threshold is neither an automatic kill nor a build/total-proof deadline. Keep the original task
 start distinct from the current attempt start; a replacement cannot erase either history or budget.
 
-## Stop, reconcile and hand off
+## Stop, reconcile and hand off (strict lane only)
 
 1. Checkpoint the exact goal and source/contract/dependency identities, failed approaches, useful
    patches/untracked files and valid evidence. Preserve the worker worktree and uncommitted changes.
