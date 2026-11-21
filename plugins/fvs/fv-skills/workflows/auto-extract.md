@@ -45,6 +45,43 @@ node "$PATCH_ENGINE" check --project-root "$CRATE_ROOT" --format json
   migrates explicitly as `extraction-patch-migration.md` describes. Never migrate here.
 - `mixed-mode` or any other code: print the result's `message` verbatim and stop.
 
+### The crates of the repository, and the lock
+
+List the crates of the repository before extracting (read-only, nothing is written):
+
+```bash
+RELEASE_DIR="<the release directory of the recorded Aeneas/Charon setup>"
+node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR"
+```
+
+With more than one crate that has a library, the extraction covers several crates. Every one is a
+target unless the agreement (`targets`, recorded by `/fvs:auto-init`) lists it as a non-target, which
+only the owner decides; the answer's `order` gives the crates with providers first. The same result
+names the `inputs` a copy needs and the symbolic links under them. A link the build certainly reads
+(a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file, anything
+under `src`, or an input itself) is named in `links` and refused: the owner replaces it with the
+content, or leaves its crate out. Every other link (the C headers a crate generates, say) is also
+refused, because a build script or an `include_str!` may read a link of any name and fall back silently
+when it is missing; the owner lists it in `extraction.unreadLinks` as a link the build does not read.
+`proposedUnreadLinks` holds that list ready to adopt (each link, its target, a reason, and whether its
+crate has a build script); show it to the owner and write it to `extraction.unreadLinks` only after the
+owner's yes. A listed link is not copied, and the copy's manifest records it as `source.links` with its
+target and reason. When the project has no
+`Cargo.lock`, or its lock does not match the patched manifests, the owner agrees to
+`--lock update --release "$RELEASE_DIR"` for the copy: the lock is made inside the copy, never in the
+checkout, and its hash and origin are recorded. The lock stays in `"$OUT/tree/Cargo.lock"`: `OUT` is
+in the evidence directory (`$HOME/.fvs/extractions`, or `FVS_EVIDENCE_DIR`), and the whole attempt
+directory is kept for as long as the extraction record that cites it.
+
+When the repository is much larger than its targets, `trim-workspace --project-root "$CRATE_ROOT"
+--release "$RELEASE_DIR" --keep <the target crates>` prints, and writes nothing, the patches that cut
+the workspace down to the targets and what they need by path, with the crates left out, the size of
+the test-only ones (`--dev-dependencies drop` removes those), the `extraction.inputs` the trimmed
+copy needs, and the links under them (`links`, `proposedUnreadLinks`, as in the `crates` answer above;
+the owner's yes covers listing them in `extraction.unreadLinks`). Show it to the owner. Only the owner's yes installs the patches and writes those inputs;
+this track never installs them on its own, and the crates left out are recorded as `dropped` in the
+spec (`aeneas-extract.md`, "A workspace larger than the verification targets").
+
 ## Step 3: Hand off to the shared extractor
 
 Run `/fvs:aeneas-extract "$CRATE_ROOT"` with the recorded configuration (features, target and
@@ -56,6 +93,23 @@ the run stopped before the build); from the `Oracle:` line, `ORACLE`, the final 
 oracle refusal after a clean build (an unratified Category-B patch, a failed diff-to-record check) is
 `refused`. When the summary has no `Oracle:` line, or the run stopped before the oracle ran, pass
 `unknown`; never pass `complete` unless the summary says so.
+
+### Extracting several crates
+
+For several crates, give the extractor one spec with a `crates` list (`aeneas-extract.md`, "Several
+crates"). A workspace of several library crates always takes this form, even for one target (a `crates` list
+of one, the rest `nonTargets` or `dropped`): the extractor refuses the single-crate spec on such a
+workspace. One entry for each target crate with its own `publishDir` and `moduleRoot`, `nonTargets` for the
+crates the agreement excludes (`dropped` for those left out of the copy; the attempt refuses a crate of
+the workspace that is none of target, `nonTargets` or `dropped`), and, for each target that calls another target, a `stitch` entry naming
+that target. Stitching makes the caller's Lean use the other crate's real translation; without it the
+calls would be axioms in the caller's Lean, so publication of a crate that calls a target without a
+stitch entry fails and the extraction is not recorded as succeeded. Use a
+`substitutions` entry only to rename a name Lean cannot read (Aeneas writes a shadowed local as `len·`);
+any other change to the translation is a patch of the Rust source, and a substitution never touches an
+axiom, the name or type of a definition, or a Trusted file. The extractor runs the chain of each crate in
+the `order` the attempt records, and the run-end summary still names one copy, `OUT`. A crate whose chain
+fails fails the whole extraction; the others stay on disk as evidence.
 
 ## Step 4: Record the extraction
 
@@ -90,6 +144,21 @@ resubmit every recorded boundary. Add one record for each new boundary:
 | `external` | declarations Aeneas emits as external stubs (`*External*.lean` templates) |
 | `handwritten-model` | models written by `/fvs:model-external` |
 | `semantic-patch` | every translation patch classified Category B: a semantic change to an otherwise extracted function |
+
+After a stitched extraction, these also need a record, each `open` until the owner decides:
+
+- every item the stitching left as an axiom on purpose (`stitch[].assumed` in the run);
+- every axiom that stitching made visible in a crate's statements and that is not Lean's standard: the
+  provider crate's own opaque items (one Charon or Aeneas cannot translate, or the run declares
+  `--opaque`), the standard-library and helper-crate axioms its translation still rests on, and the same
+  external item when two crates each carry an axiom for it (both copies in one record);
+- the items of a crate the owner chose not to verify.
+
+An opaque item of a verified crate may be listed through its accepted externals record: that is a
+disclosed assumption, not a black box. What is not allowed is a hand-written axiom that stands in for a
+function the stitching translated, or a stale copy of one (for example the caller's own copy of a
+provider function that stitching replaced): replace it with the provider's accepted theorem, or delete
+it.
 
 Each record holds `id` (stable across reruns), `kind`, `source` (`symbol`, and `commit`: the
 recorded revision's commit), `model` (`symbol`, and `sha256` of the Lean file holding it),
@@ -126,6 +195,16 @@ node "$AUTO" record-externals --project-root . --input "$RECORDS"
   never deleted.
 - `invalid-input`: fix the records named in `errors` and rerun.
 
+## What the project does after stitching
+
+Stitching changes which axioms the project's theorems rest on: the items it replaced leave the lists,
+and the axioms the provider's own translation still rests on enter them. A project that pins those
+lists (a checked message around `#print axioms`) must regenerate the pinned lists in its own Lean
+project, as an ordinary change that is reviewed; this workflow never rewrites a pin in the project.
+Each axiom that newly appears needs the externals record above. Hand-written Trusted axioms about a
+function that is now translated are replaced by the provider's theorems or removed. Report these as the
+next action; they are the project's work, not part of the extraction.
+
 ## Step 6: Write the regeneration instructions
 
 First make sure the project root has an `aeneas-config.yml` recording `aeneas.commit` (the pinned Aeneas
@@ -138,7 +217,10 @@ After a recorded success, write `.formalising/auto-fv/regenerate.md` from `read-
 root, the recorded revision and its commit (`state.extraction.inputs.sourceCommit`), the
 configuration, the ordered patches with their sha256 (`state.extraction.inputs.patches`), the
 manifest sha256, and the steps: check out that commit with a clean extraction input set, rerun
-`/fvs:auto-extract`, and compare the new record's patch list and source commit with these.
+`/fvs:auto-extract`, and compare the new record's patch list and source commit with these. For several
+crates add the extraction spec (each crate's package, directory, `publishDir`, `moduleRoot`, `stitch`,
+`substitutions`, and the non-targets), and the lock's origin and hash (`state.extraction.run.lock`):
+a lock that was generated or updated is not in the checkout, so say where its copy is kept.
 
 ## Step 7: Report
 
@@ -147,6 +229,8 @@ FVS >> AUTO-EXTRACT
 
 Extraction:            {succeeded | failed: <reasons>} for revision {revision} ({K} patches)
 Restored source:       {verify-restore ok | refused}
+Crates:                {one crate | each crate with its status; stitched to which providers; non-targets and who decided}
+Lock:                  {read | generated | updated} {sha256 prefix}; copy kept at {path}
 Evidence:              tree check {ok | refused}; B patches ratified as aeneas-extract reported
 Obligations remaining: {open externals by kind, and the patches' open Obligations: lines}
 Note:                  Extraction success is not a proof; no specification has been stated or proved.
@@ -154,6 +238,7 @@ Note:                  Extraction success is not a proof; no specification has b
 State:            extraction {status}; externals {total} ({open} open, {assumption-accepted} accepted assumptions, {blocked} blocked)
 Next action:      {nextAction from read-state}
 Pending decision: {pendingDecisions, plus any boundary awaiting an owner decision, or none}
+Project work:     {after stitching: regenerate the pinned axiom lists and add the externals records; or none}
 ```
 
 </process>

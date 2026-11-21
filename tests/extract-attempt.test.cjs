@@ -96,6 +96,11 @@ describe('extraction attempt: supported positive', () => {
     assert.equal(run.supported, true);
     assert.deepEqual(run.residuals, []);
     assert.equal(run.trust, 'local-host-and-reviewed-scripts');
+    // The scope comes from the manifest the attempt is bound to, and the attempt record carries it too.
+    const recordedScope = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8')).scope;
+    assert.equal(recordedScope.kind, 'single-crate');
+    assert.deepEqual(run.scope, recordedScope);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'attempt.json'), 'utf8')).scope, recordedScope);
     assert.equal(run.llbc.sha256, sha256(path.join(out, 'demo.llbc')));
     assert.equal(run.translation.projectPath, path.join(ws.project, 'Demo', 'translation.json'));
     assert.equal(run.translation.sha256, sha256(path.join(ws.project, 'Demo', 'translation.json')));
@@ -488,5 +493,52 @@ describe('extraction attempt: publication preflight never mutates the destinatio
     assert.equal(step(ws, out, 'charon').status, 0);
     // translation.json names only Demo.lean, so the extra file already fails Aeneas.
     assert.notEqual(step(ws, out, 'aeneas').status, 0);
+  });
+});
+
+describe('extraction attempt: the single-crate spec', () => {
+  const HEADER = 'module\npublic import Aeneas\n@[expose] public section\nopen Aeneas Aeneas.Std Result\n';
+  const lean = (body) => `${HEADER}namespace demo\n\n/-- [demo::one]:\n    Source: 'src/lib.rs', lines 1:0-1:24\n    Visibility: public -/\n${body}\n\nend demo\n`;
+
+  it('renames a name Lean cannot read, with the match count it must find, in a single-crate attempt', () => {
+    const ws = workspace({ lean: lean('def one : Result Std.U32 := do\n  let n· := 1#u32\n  ok n·') });
+    const out = complete(ws, { substitutions: [{ file: 'Demo.lean', find: 'n·', replace: 'n_one', count: 2, reason: 'a local named with a middle dot' }] });
+    assert.match(fs.readFileSync(path.join(ws.project, 'Demo', 'Demo.lean'), 'utf8'), /let n_one := 1#u32\n {2}ok n_one/);
+    const status = engine(ws, ['attempt-status', '--out', out]);
+    assert.equal(status.status, 0, status.stdout);
+    assert.equal(status.result.run.substitutions.length, 1);
+  });
+
+  it('refuses stitching in a single-crate spec, which has no other crate to stitch to', () => {
+    const ws = workspace();
+    const { recorded } = attempted(ws, { stitch: [{ crate: 'other' }] });
+    assert.equal(recorded.status, 5, recorded.stdout);
+    assert.match(recorded.result.message, /stitch needs a multi-crate spec/);
+  });
+});
+
+describe('extraction attempt: a single-crate attempt is not a multi-crate one', () => {
+  it('refuses --crate, which names a crate of a multi-crate attempt', () => {
+    const ws = workspace();
+    const { out, recorded } = attempted(ws);
+    assert.equal(recorded.status, 0, recorded.stdout);
+    const extra = engine(ws, ['run', '--out', out, '--step', 'charon', '--crate', 'demo']);
+    assert.equal(extra.status, 2, extra.stdout);
+    assert.match(extra.result.message, /--crate is only for a multi-crate attempt/);
+  });
+
+  it('refuses a hyphenated crate name in the spec', () => {
+    const ws = workspace();
+    const { out, recorded } = attempted(ws, { crate: 'demo-lib' });
+    assert.equal(recorded.status, 5, recorded.stdout);
+    assert.match(recorded.result.message, /spec\.crate "demo-lib" has a hyphen/);
+    assert.equal(fs.existsSync(path.join(out, 'attempt.json')), false);
+  });
+
+  it('refuses nonTargets, which belong to a multi-crate spec', () => {
+    const ws = workspace();
+    const { recorded } = attempted(ws, { nonTargets: [{ crate: 'other', dir: 'other' }] });
+    assert.equal(recorded.status, 5, recorded.stdout);
+    assert.match(recorded.result.message, /nonTargets belongs to a multi-crate spec: list this crate under crates/);
   });
 });

@@ -272,15 +272,24 @@ for the build artifact directly. Always build under `LEAN_NUM_THREADS="${LEAN_NU
 
 Charon runs in a disposable copy the engine prepares: the original checkout is never the
 extraction tree. Every cycle uses a NEW `OUT` outside the crate checkout, because the patch list
-may have changed since the last one; an earlier cycle's copy is never reused.
+may have changed since the last one; an earlier cycle's copy is never reused. `OUT` lies in a durable
+evidence directory, not a temporary one (`$HOME/.fvs/extractions` unless `FVS_EVIDENCE_DIR` says
+otherwise): the extraction record, the oracle and the reviews cite files inside it (the LLBC and logs,
+each crate's attempt and stage records, the published-file hashes, `tree/Cargo.lock`), and a
+temporary directory can be cleared before anyone reads them. The whole attempt directory stays for as
+long as the record that cites it does.
 
 ```bash
 set -o pipefail
-OUT="$(mktemp -d "${TMPDIR:-/tmp}/fvs-extract.XXXXXX")/copy"
-node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" || exit 1   # records the manifest; refusal -> STOP
+EVIDENCE_ROOT="${FVS_EVIDENCE_DIR:-$HOME/.fvs/extractions}"
+mkdir -p "$EVIDENCE_ROOT" || exit 1
+OUT="$(mktemp -d "$EVIDENCE_ROOT/$(basename "$CRATE_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")/copy"
+RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
+node "$PATCH_ENGINE" prepare --project-root "$CRATE_ROOT" --out "$OUT" --release "$RELEASE_DIR" || exit 1   # records the manifest, the workspace and the scope; refusal -> STOP
 node "$PATCH_ENGINE" verify-tree --out "$OUT" || exit 1                  # before Charon: the copy is the recorded post-patch tree
 # One recorded attempt. $EXTRACT_SPEC (JSON: release, crate, publishDir, charonArgs, cargoArgs) states the
 # project's usual invocation in the supported form; the engine refuses anything else before recording.
+# (A repository with several target crates uses a spec with a crates list: see "Several crates" below.)
 node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC" || exit 1
 # Charon runs in "$OUT/tree" with --dest-file "$OUT/<crate>.llbc", under the controlled environment.
 node "$PATCH_ENGINE" run --out "$OUT" --step charon; CHARON_STATUS=$?   # 9 = Charon failed -> CLASSIFY
@@ -299,7 +308,11 @@ configuration. `run` executes each stage once, in order, under an environment it
 (`HOME`, `RUSTUP_HOME`, `CARGO_HOME`, its own `PATH`, the release's pinned `RUSTUP_TOOLCHAIN`). It
 records the tool hashes, the exact arguments and every cargo configuration file by hash. An
 influential or unknown variable in the caller's environment, or a present cargo configuration file,
-leaves the attempt unsupported; it is recorded by name only and never by value. Every stage and the
+leaves the attempt unsupported; it is recorded by name only and never by value. The `attempt` message
+names them (`unsupported: NAME (class), ...`): prepare a new copy and run the engine from a shell
+without them, for example by starting each engine command with `env -i HOME="$HOME" PATH="$PATH"` (a
+coding agent's shell often carries such variables; the extraction is only recorded as supported when
+none is left). Every stage and the
 final check derive the invocation again and re-read the cargo configuration files and the toolchain
 identity; any difference from the recorded attempt refuses the stage. A failed or
 interrupted stage ends the attempt: prepare a new copy to retry. Publication writes only into
@@ -309,10 +322,243 @@ supported contract (`attempt` refuses with `invalid-input`), run the project's o
 `"$OUT/tree"` with `--dest-file "$OUT/<crate>.llbc"` and Aeneas as before. That extraction can still
 be recorded, but it carries no recorded attempt and stays unbound.
 
+#### Several crates
+
+A repository whose crates call each other is extracted crate by crate inside the ONE prepared
+copy. The owner decides which in-repo crates are verification targets (by default every crate
+that has a library); each crate left out is declared a non-target, and only the items of a
+non-target may become assumptions. `prepare --release` reads the workspace of the checkout and of the
+copy (cargo only reads) and records both, and the attempt refuses unless every in-repo library crate of
+the original workspace is accounted for: a target, a `nonTargets` entry (its sources are in the copy),
+or a `dropped` entry (they are not: the crate is outside the copy, or a patch replaced its path
+dependency by a registry release). A several-crate attempt on a copy prepared without `--release` is
+refused. A crate that reaches Charon's output undeclared is refused there as well.
+
+`prepare` always records the scope of the extraction in the manifest (`scope`), with or without the
+release, because a single crate is established, never inferred from missing data. With the release,
+cargo's inventory gives `{ kind: 'multi-crate' | 'single-crate', basis: 'cargo', libraryCrates }`
+(multi-crate when the checkout holds two or more library crates). Without it nothing reads cargo, so
+`kind: 'single-crate'` (`basis: 'manifest'`) is claimed only when the project and the copy each hold one
+manifest that is a plain package: no `[workspace]`, `[patch]` or `[replace]` table, no workspace
+inheritance, no path dependency, a second `Cargo.toml` nowhere among the inputs, and no workspace
+manifest in a directory above the project or the copy. Anything else is `kind: 'unknown'` with the
+reason, and a single-crate `attempt` on an unknown scope is refused (prepare a new copy with
+`--release`); so is a copy whose manifest records no scope (prepared before it was recorded). A
+single-crate `attempt` on a `multi-crate` scope is refused as well: the single form accounts for no
+other crate of the workspace, so a spec with a `crates` list is the form for every extraction in a
+workspace of several library crates, one entry per target and every other library crate in `nonTargets`
+or `dropped` by the owner's decision (a `crates` list of one is a legitimate list). The
+attempt, each unit's record and `attempt-status` (`run.scope`) carry the scope; `status --out` shows it
+for a copy that has no attempt. `crates` answers with the same `scope` object: for a checkout, the scope that
+`prepare --release` would record (cargo reads it the same way), so a checkout at a recorded source commit is
+classified without preparing a copy; for a copy, the scope its manifest recorded.
+
+```bash
+RELEASE_DIR=...   # the release directory the spec names as `release` (relative to the project root, or absolute)
+node "$PATCH_ENGINE" crates --project-root "$CRATE_ROOT" --release "$RELEASE_DIR"   # a fresh checkout: every in-repo crate, the `scope` prepare would record, and the extraction.inputs a copy needs
+node "$PATCH_ENGINE" crates --out "$OUT" --release "$RELEASE_DIR"   # advisory: in-repo crates, their in-repo dependencies, an order (providers first)
+node "$PATCH_ENGINE" attempt --out "$OUT" --spec "$EXTRACT_SPEC"     # a spec with a crates list records one attempt chain per crate
+# then, for each crate in the attempt's `order` (providers before the crates that import them):
+node "$PATCH_ENGINE" run --out "$OUT" --step charon  --crate "$CRATE"
+node "$PATCH_ENGINE" run --out "$OUT" --step aeneas  --crate "$CRATE"
+node "$PATCH_ENGINE" run --out "$OUT" --step publish --crate "$CRATE"
+node "$PATCH_ENGINE" attempt-status --out "$OUT"                      # refuses unless EVERY crate is complete
+```
+
+`crates` runs `cargo metadata --no-deps --offline` and writes nothing. On a checkout it offers every
+in-repo crate: the workspace members and the path dependencies inside the checkout that are not
+members, followed to any depth (package, crate name, directory, `member`, the in-repo crates it
+depends on, an order with providers first, so a member comes after the non-member crates it needs),
+proposes the `extraction.inputs` a copy needs (workspace manifest and lock, every member and in-repo
+path dependency) and names the symbolic links under them. A copy holds regular
+files only, and a build script, `include_str!` or `include_bytes!` may read a link of any name and
+fall back silently when it is missing, so no link is left out on a guess. A link the build certainly
+reads (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file,
+anything under `src`, or an input itself) is listed in `links` and refused whatever the owner says:
+the owner replaces it by its content or leaves its crate out. Every other link (generated C headers,
+say) is refused too, unless the owner lists it in `extraction.unreadLinks` (`[{ path, reason }]`) as a
+link the build does not read. `crates` proposes that list: `proposedUnreadLinks` holds each such link
+with its `target`, a `reason` to adopt, and `buildScript` (true when the crate that holds it has a
+build script, which could read it). Show the whole proposal to the user and write it into
+`extraction.unreadLinks` only after their yes; never edit the list on your own. `unreadLinks` holds
+the links already listed (with their reasons) and `staleUnreadLinks` the entries that name no link
+under the inputs, which `check` and `prepare` refuse. A listed link is not copied; `check` and the
+manifest (`source.links`) record it with its target and reason. It also names
+a member whose real directory lies outside the checkout (`outside`). On a prepared copy it also names the path
+dependencies the patches removed (`pathDependenciesRemoved`) and the packages the copy lacks
+(`packagesNotInCopy`), so a patch that hides an in-repo crate is never silent; the attempt enforces
+the same from the workspace that `prepare --release` recorded. A workspace cargo cannot read (a missing member, inheritance without a workspace, a path
+dependency without a manifest) is reported with cargo's first error lines.
+
+**A workspace larger than the verification targets.** A copy holds a manifest for every workspace
+member, and a large repository (libcrux has 43 in-repo packages, one of them with a 42 MB test-vector
+directory) needs far more than the crates the owner verifies. `trim-workspace` prints, and writes
+nothing, the translation patches that cut the workspace down:
+
+```bash
+node "$PATCH_ENGINE" trim-workspace --project-root "$CRATE_ROOT" --release "$RELEASE_DIR" \
+  --keep "$TARGET_CRATES"   # comma-separated crate or package names; add --dev-dependencies drop to prune test-only path dependencies
+```
+
+The kept set is the `--keep` crates plus every in-repo crate they need by path. The root manifest's
+`members` list loses the rest, and a root package that is not kept loses its package tables so the
+workspace is virtual. With `--dev-dependencies drop`, a path dev-dependency on a crate that is not
+needed otherwise is removed from the kept manifest instead of pulling that crate in; the result
+lists those crates under `devOnly` with their size in bytes. The result also names the `kept` and
+`dropped` crates (the library ones among the dropped are what the spec lists as `dropped`), the
+`extraction.inputs` the trimmed copy needs (`config`), and each patch with its `sha256`. Before
+printing, the command has cargo read a trial copy of exactly those inputs and applies every patch to
+a clean copy of the originals. It refuses a `--keep` name that is not an in-repo crate or has no
+library, a `members` pattern (the owner lists the members one by one first), a manifest it cannot cut
+line by line, a path dependency outside the checkout, and a symbolic link inside the kept crates that
+the build certainly reads (`links`, as in `crates`). Every other link under the kept crates is reported
+as `crates` reports it: `unreadLinks` (already listed in `extraction.unreadLinks`),
+`proposedUnreadLinks` (each with its target and a suggested reason, for the owner to list) and
+`staleUnreadLinks` (listed, but no longer a link under these inputs). The printed `config` holds the
+inputs only; the owner's yes adds the link entries.
+
+Show the owner the kept and dropped crates, the `devOnly` bytes and the patches, and wait for a
+yes. That yes covers installing the patches, writing the printed `extraction.inputs` AND bringing
+`extraction.unreadLinks` in line with them (removing each `staleUnreadLinks` entry, a link of a crate
+the trim leaves out, which `prepare` would refuse, and adding the `proposedUnreadLinks` the owner
+adopts) into the
+project's configuration; the owner may instead keep a larger selection by running it again with other
+`--keep` names. On the yes, install each printed patch as in Step 6 (write it as
+`translation-patches/<name>.patch`, append the name to `series`, run `check`); the engine wrote them
+from the owner's choice of crates and has already applied them, so there is no model-written text to
+review, and the owner's yes is the ratification. Record each dropped library crate in the spec's
+`dropped` with the reason "left out by the owner's workspace trim". The trimmed manifests remove
+packages the existing `Cargo.lock` still lists, so run the next `prepare` with `--lock update
+--release "$RELEASE_DIR"` (or keep a lock that already matches); `crates --out "$OUT"` then lists the
+kept crates and shows the others under `packagesNotInCopy`.
+
+The spec keeps the single-crate fields as a base (`release`, `cargoArgs`, `charonArgs`) and adds
+`main` (the crate the extraction record is about), `crates` (one entry per target) and
+`nonTargets`:
+
+| Field | Meaning |
+|-------|---------|
+| `crates[].crate`, `package`, `dir` | the crate name Charon labels items with (underscored), the cargo package name, and its directory in the copy |
+| `crates[].publishDir` | where that crate's Lean is published; one folder per crate, none inside another |
+| `crates[].moduleRoot` | the Lean module name of that folder, so another crate can import it |
+| `crates[].stitch` | `[{ crate, assume }]`: this crate calls target `crate`; its Lean imports that crate's published module (see below) |
+| `crates[].substitutions` | `[{ file, find, replace, count, reason }]`: a rename of a name Lean cannot read, with the exact number of matches. `find` holds U+00B7 (Aeneas writes a shadowed local as `len·`), `replace` is a plain identifier that occurs nowhere in the crate's generated Lean, no match follows a `.`, and the rename is made inside a definition body only. Every match has to be an identifier in code: a match inside a string literal, a character literal or a comment (or in text the engine cannot read to the end, such as an unclosed string) refuses the whole substitution when the file is published, so literal data is never renamed. Any other edit is refused: it belongs in a patch of the Rust source. Recorded with before and after hashes and recomputed by `attempt-status` |
+| `nonTargets` | `[{ crate, dir }]`: in-repo crates the owner decided not to verify, with their sources in the copy |
+| `dropped` | `[{ crate, reason }]`: in-repo crates left out of the copy by the owner's decision, or whose path dependency a patch replaced by a registry release (the single-crate spec has this field too, for a project whose scope is a single crate); the reason says who decided and why, and a crate still in the copy cannot be dropped |
+
+Every crate has its own Charon, Aeneas and publish chain, so a failing crate ends only its own
+chain. `attempt-status` refuses until every crate is complete and then lists each crate's status;
+`--crate NAME` reads one crate.
+
+The attempt also records its roster: `main`, the `order` (providers first), one row per crate with
+its `package`, `dir` and the crates it is `stitch`ed to, the `nonTargets` and the `dropped` crates,
+in that canonical form (fixed key order, every list sorted except the order). The roster and its
+hash `rosterSha256` are written into the top-level record and into every crate's own attempt record,
+and the status returns both (`run.roster`, `run.rosterSha256`; each crate's row carries the hash).
+Whoever reads the status can bind to that one hash. `attempt-status` and every stage rebuild the
+roster from the crates' records and refuse when it differs from the recorded one: a crate left out
+of the top-level record (a failed crate's row deleted), a changed `main`, `dropped`, package,
+directory or imports, an order that the stitching does not give, or a directory under `units/` that
+is not in the roster. A crate's own directory is not read alone: `attempt-status --out
+OUT/units/NAME` is refused and points to the copy, where the roster is checked. Each unit row is a whole single-crate run plus its `imports`,
+`stitch`, `hasErrors` (the items Aeneas could not translate; they are never roots),
+`foreignCrates` (each crate the LLBC reaches, as `target`, `non-target` or `external`; an external says where it comes from: `origin` `toolchain` or `registry`, with the locked `package`, `version` and `checksum` for a registry crate) and the
+pinned sources of each non-target.
+
+What the Charon stage accepts as a source. Every source file the LLBC names lands in exactly one
+class, or the stage fails. A path relative to the copy, or absolute and under it, is a file of the
+copy: it must be a file the prepared copy records, its label must be the crate that owns its
+directory, and the main crate's contents must be the recorded bytes. A `/rustc/library/...` path is
+the toolchain and must be labelled with a crate of the toolchain (`core`, `alloc`, `std`,
+`proc_macro`, `test`; the label need not match the directory, since `core` vendors `stdarch`). A path
+under `<cargo home>/registry/src/<index>/<name>-<version>/`, where the cargo home is the `CARGO_HOME`
+the tools ran with (a path that merely ends like one is not a registry path), is a registry package
+only when all of these hold: its label is neither a declared crate nor a crate of the toolchain, the
+`Cargo.lock` in the copy lists `<name>-<version>` with a `registry+` source and a checksum, and the
+archive that cargo kept at `<cargo home>/registry/cache/<index>/<name>-<version>.crate` has exactly that
+checksum. Every file the LLBC read from that package is then compared with the archive, which the
+engine reads without unpacking it: the file must be a plain file (not a link, at the file or at any
+directory above it) at its own place under the cargo home's unpacked copy, the archive must hold it as
+a regular file, and its bytes, and the `contents` the LLBC carries for it when it carries any, must be
+the archive entry's bytes. A changed, missing, redirected or non-archive file refuses the stage even
+though the archive's checksum is the lock's; so does an archive that cannot be read as a package (not
+gzip, a repeated or unknown entry, a wrong header checksum, trailing bytes). Files of the package that
+the LLBC does not read are not compared. Only the cargo home itself may be reached through a link: a
+cargo home whose `registry`, `src` or index directory is a link (a cache kept on another volume) makes
+every registry file read as redirected, and the stage is refused until the cargo home is a real tree. One crate label cannot stand behind two different identities. A crate that is none of these
+and none of the declared crates, including one that is only a name in the `Cargo.lock` (a path, git
+or registry package with no source file in the LLBC), is refused, not filed as external. Everything else is refused with
+the path or form named: a path outside the copy (another tree, an absolute path into the original
+checkout), a file the copy does not record (an input missing from `extraction.inputs`, or a file a
+build script made), a `Virtual` or `NotReal` name, and a git dependency's checkout. Those forms have
+not been seen in real Charon output yet, so the engine does not guess at them; a project that needs
+one has to bring the crate in as a declared crate or change the dependency.
+
+Stitching. When crate B calls target crate A, Aeneas writes B's copy of A's items as axioms that
+carry only a type. Publication replaces each such axiom by an alias of A's real definition with
+the type B was translated against, and adds `public import <A moduleRoot>.<file>` to B's Lean.
+The signature of each alias is checked in two places. The engine compares the two signatures where
+it can read both and refuses a difference it can read (`textComparison` is `equal` or `undecided`;
+`differ` never reaches a record). The engine cannot run Lean, so the comparison that decides is
+generated into the published module: after the aliases it appends a `run_cmd` block that requires
+each alias to have the same number of universe parameters as A's constant and a declared type
+definitionally equal to A's type (inside `Result` for a constant). An alias alone elaborates by
+instantiating what A keeps general (an implicit type argument, an instance argument, a universe),
+and the block rejects exactly those. Every replaced item carries `check: pending-lean-build`, never
+a finished check: the comparison has run once the published modules build with exit 0, and the
+record lists each generated block (`leanChecks`: the file and its project-relative path, its module,
+the block's byte length and hash, and the hash of the whole published file, which is the file's
+`publication` hash; the block is the exact end of that file) so that `attempt-status` recomputes it. Functions and types become reducible aliases; a constant becomes a plain definition `Result.ok` of A's
+constant, so proof automation keeps seeing the constant. Every existing name stays valid. Nothing
+falls back to an axiom silently. A crate whose Charon output reaches a target crate A must have a
+`stitch` entry for A, or its publication fails (declare A a non-target if the owner decides to
+leave A out). An item A does not declare (for example a module excluded from A's translation) must
+be named under `assume`, by a module or item path and never the whole crate; `assume` never covers
+an item A declares, an entry that matches nothing is refused as stale, and the items taken as
+assumed are recorded and each needs an externals record. The same holds for a definition: when B's
+Lean defines an item of A itself (Aeneas translated it in B instead of leaving an axiom), the item
+has two declarations if A defines it too, and A's theorems then concern the other one, so
+publication refuses; if A does not define it, it has to sit under an `assume` prefix, and it is
+recorded as a copy with the prefix that covers it. An item A declares but leaves opaque stays
+an alias of A's own axiom: it is recorded as `providerOpaque` and needs A's externals record. After
+stitching, every axiom left in the published Lean is classified by the crate its Rust path names: an
+axiom for another target's item that is not a recorded assumption, or one with no readable Rust path,
+fails publication. What B imports is what A published, so publication stitches only after A's
+own chain is complete and consistent (every stage recorded, the published files as recorded, A's own
+edits reproducing): A's inventory and the `providerDeclSha256` of each replaced item come from A's
+final published Lean, substitutions and stitching included, never from the raw Aeneas output, and a
+name that Lean text declares twice (in A or in B) is refused instead of bound to the last one. The
+record names the hash of A's publish stage (`providerStage`, `providerStageSha256`). The generated files are edited only by these two
+declared, recorded transforms; the `translation.json` Aeneas wrote is left as it is. Two caveats:
+an item whose signature involves another crate's types that B and A each wrote out separately
+cannot be aliased, and two crates that reach the same external Rust item each keep their own
+axiom for it.
+
+A project that pins the axioms a theorem depends on (a checked message around `#print axioms`) sees
+those pinned lists change after stitching: the items stitching replaced leave them, and the axioms
+the provider's own translation still rests on enter. Updating the pins is project-side work, and each
+axiom that enters needs an externals record; this workflow never regenerates a pin in the project,
+and its report says so as the next action.
+
+Publication never overwrites a file it does not own. When a folder already holds committed
+extraction output from an earlier layout, the owner removes it once; later runs own the folder.
+
 Send Charon's `.llbc` file and logs outside `"$OUT/tree"` (`--dest-file` as above; without it
 Charon writes into its working directory). Only cargo's `target/` directory may appear in the copy
-after `prepare`; any other new, edited or deleted file there fails `verify-tree`. Keep `Cargo.lock`
-committed and current so cargo has nothing to rewrite in the copy. When Charon fails, still run
+after `prepare`; any other new, edited or deleted file there fails `verify-tree`. The copy needs a
+`Cargo.lock` that matches its patched manifests, so that cargo has nothing to write in it. Keep one
+in the project and current (it need not be committed, or may be ignored by git: it is not counted
+as an uncommitted source, and its own hash is recorded), or let `prepare` bring it in line once: `--lock update --release
+"$RELEASE_DIR"` (the release directory the spec names) runs `cargo generate-lockfile` in the copy when the project has no lock, and
+`cargo update --workspace` when it has one (every version the lock pins is kept; only what the
+patched manifests added or dropped changes). Either may need network access. The manifest records
+the lock's hash and origin (`read`, `generated` or `updated`, and the hash it started from); the
+checkout is not touched, and `verify-restore` refuses when the project's own `Cargo.lock` is no
+longer the one recorded at the start, and `verify-tree` names a lock that a tool rewrote in the
+copy. `attempt` refuses a copy that has no lock. A generated or updated lock pins
+whatever resolved at that moment, and a later `prepare` may resolve newer versions, so the lock
+(`"$OUT/tree/Cargo.lock"`) is kept as part of the whole attempt directory, in the evidence directory
+above, for as long as the extraction record is. When Charon fails, still run
 the second `verify-tree`, skip Aeneas, and go to CLASSIFY.
 
 An engine refusal (`prepare`, either `verify-tree`, or `verify-restore` exiting nonzero) is a

@@ -480,6 +480,120 @@ describe('fvs-extract-patches: copy boundary', () => {
     assert.equal(fs.readFileSync(path.join(outside, 'shared.rs'), 'utf8'), 'pub fn shared() {}\n');
   });
 
+  // A link that is no manifest, lock, build script, Rust source or file under src. The build may read it
+  // all the same (a build script, include_str! or include_bytes!, with a fallback when it is missing),
+  // so the engine never decides from the name that it is unread: the owner lists it, with the reason.
+  function projectWithGeneratedLinks(unreadLinks) {
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.writeFileSync(path.join(outside, 'header.h'), '/* generated */\n');
+    fs.mkdirSync(path.join(outside, 'tests'));
+    const config = { extraction: { inputs: ['Cargo.toml', 'src', 'gen'] } };
+    if (unreadLinks !== undefined) config.extraction.unreadLinks = unreadLinks;
+    const root = project([], { config });
+    fs.mkdirSync(path.join(root, 'gen', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'gen', 'notes.txt'), 'kept\n');
+    fs.symlinkSync(path.join(outside, 'header.h'), path.join(root, 'gen', 'header.h'));
+    fs.symlinkSync(outside, path.join(root, 'gen', 'sub', 'tests'));
+    return { root, outside };
+  }
+
+  it('refuses a link that is not a Rust input until the owner lists it as unread', () => {
+    const { root, outside } = projectWithGeneratedLinks();
+    const before = snapshot(root);
+    for (const command of [['check', '--project-root', root], ['prepare', '--project-root', root, '--out', outDirectory()]]) {
+      const refused = run(...command);
+      assert.equal(refused.status, 5, refused.stdout);
+      assert.deepEqual([refused.json.code, refused.json.kind, refused.json.path, refused.json.target, refused.json.listable], ['invalid-input', 'symlink', 'gen/header.h', path.join(outside, 'header.h'), true]);
+      assert.match(refused.json.message, /list it in extraction\.unreadLinks with the reason/);
+      assert.match(refused.json.message, /the build may read a link of any name/);
+    }
+    assert.deepEqual(snapshot(root), before);
+  });
+
+  it('leaves a listed link out of the copy and records its target and reason', () => {
+    const reasons = { 'gen/header.h': 'C header written by cbindgen; no build script reads it', 'gen/sub/tests': 'a link to the checkout of the C tests' };
+    const { root, outside } = projectWithGeneratedLinks(Object.entries(reasons).map(([linkPath, reason]) => ({ path: linkPath, reason })));
+    const before = snapshot(root);
+    const checked = run('check', '--project-root', root);
+    assert.equal(checked.status, 0, checked.stdout);
+    assert.deepEqual(checked.json.links, [
+      { path: 'gen/header.h', target: path.join(outside, 'header.h'), reason: reasons['gen/header.h'] },
+      { path: 'gen/sub/tests', target: outside, reason: reasons['gen/sub/tests'] },
+    ]);
+    const out = outDirectory();
+    const prepared = run('prepare', '--project-root', root, '--out', out);
+    assert.equal(prepared.status, 0, prepared.stdout);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.source.links, checked.json.links);
+    assert.equal(fs.existsSync(path.join(out, 'tree', 'gen', 'notes.txt')), true, 'the regular files of the directory are copied');
+    assert.equal(fs.existsSync(path.join(out, 'tree', 'gen', 'header.h')), false, 'the link is not');
+    assert.equal(fs.lstatSync(path.join(out, 'tree', 'gen', 'sub'), { throwIfNoEntry: false })?.isDirectory() ?? false, false, 'a directory holding only a link is not made');
+    assert.equal(run('verify-tree', '--out', out).status, 0);
+    assert.equal(run('verify-restore', '--out', out).status, 0);
+    assert.deepEqual(snapshot(root), before, 'the checkout is not touched');
+  });
+
+  it('does not let a build script that reads a data link take its fallback unseen', () => {
+    // build.rs uses data/options.bin when it exists and a default otherwise, and both builds succeed:
+    // leaving the link out would change the generated code without any error.
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.writeFileSync(path.join(outside, 'options.bin'), 'fast');
+    const root = project([], { config: { extraction: { inputs: ['Cargo.toml', 'src', 'build.rs', 'data'] } } });
+    fs.writeFileSync(path.join(root, 'build.rs'), 'fn main() { let mode = std::fs::read_to_string("data/options.bin").unwrap_or_else(|_| "safe".into()); println!("cargo:rustc-env=MODE={mode}"); }\n');
+    fs.mkdirSync(path.join(root, 'data'));
+    fs.symlinkSync(path.join(outside, 'options.bin'), path.join(root, 'data', 'options.bin'));
+    const refused = run('prepare', '--project-root', root, '--out', outDirectory());
+    assert.equal(refused.status, 5, refused.stdout);
+    assert.deepEqual([refused.json.kind, refused.json.path, refused.json.listable], ['symlink', 'data/options.bin', true]);
+  });
+
+  it('refuses an unreadLinks entry that names no link, a link the build certainly reads, or is malformed', () => {
+    const asLinks = (...entries) => entries;
+    // The fixture's own two links, listed, so that the walk reaches the entry under test.
+    const real = [{ path: 'gen/header.h', reason: 'r' }, { path: 'gen/sub/tests', reason: 'r' }];
+    const cases = [
+      ['a regular file', asLinks(...real, { path: 'gen/notes.txt', reason: 'x' }), /extraction\.unreadLinks lists gen\/notes\.txt, which is not a symbolic link/],
+      ['a missing path', asLinks(...real, { path: 'gen/gone.h', reason: 'x' }), /lists gen\/gone\.h, which is not a symbolic link/],
+      ['a path outside the inputs', asLinks(...real, { path: 'elsewhere/x.h', reason: 'x' }), /lists elsewhere\/x\.h, which is not a symbolic link/],
+      ['a link the build certainly reads', asLinks(...real, { path: 'src/data.bin', reason: 'x' }), /a symbolic link the build certainly reads .* cannot be listed in extraction\.unreadLinks/],
+      ['an entry without a reason', asLinks({ path: 'gen/header.h', reason: ' ' }), /extraction\.unreadLinks\[0\]\.reason must say why the build does not read gen\/header\.h/],
+      ['an entry with another field', asLinks({ path: 'gen/header.h', reason: 'x', note: 'y' }), /extraction\.unreadLinks\[0\] must be an object with only path and reason/],
+      ['an absolute path', asLinks({ path: '/gen/header.h', reason: 'x' }), /extraction\.unreadLinks\[0\]\.path "\/gen\/header\.h" must be a plain project-relative path/],
+      ['a path with ..', asLinks({ path: 'gen/../gen/header.h', reason: 'x' }), /must be a plain project-relative path/],
+      ['a path listed twice', asLinks({ path: 'gen/header.h', reason: 'x' }, { path: 'gen/header.h', reason: 'y' }), /lists gen\/header\.h more than once/],
+      ['a list that is not an array', { path: 'gen/header.h', reason: 'x' }, /extraction\.unreadLinks must be an array/],
+    ];
+    for (const [name, listed, message] of cases) {
+      const { root, outside } = projectWithGeneratedLinks(listed);
+      if (name === 'a link the build certainly reads') {
+        fs.writeFileSync(path.join(outside, 'data.bin'), 'x');
+        fs.symlinkSync(path.join(outside, 'data.bin'), path.join(root, 'src', 'data.bin'));
+      }
+      const out = outDirectory();
+      const refused = run('prepare', '--project-root', root, '--out', out);
+      assert.equal(refused.status, 5, `${name}: ${refused.stdout}`);
+      assert.match(refused.json.message, message, name);
+      assert.equal(fs.existsSync(out), false, name);
+    }
+  });
+
+  it('still rejects a link the build certainly reads, wherever it sits', () => {
+    const outside = temporaryDirectory('fvs-extract-outside-');
+    fs.writeFileSync(path.join(outside, 'data.bin'), 'x');
+    for (const [link, name] of [['src/data.bin', 'under src'], ['gen/extra.rs', 'a Rust file'], ['gen/build.rs', 'a build script'], ['gen/Cargo.toml', 'a manifest']]) {
+      const root = project([], { config: { extraction: { inputs: ['Cargo.toml', 'src', 'gen'] } } });
+      fs.mkdirSync(path.join(root, 'gen'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'data.bin'), path.join(root, link));
+      const out = outDirectory();
+      const prepared = run('prepare', '--project-root', root, '--out', out);
+      assert.equal(prepared.status, 5, `${name}: ${prepared.stdout}`);
+      assert.deepEqual([prepared.json.code, prepared.json.kind, prepared.json.path], ['invalid-input', 'symlink', link], name);
+      assert.match(prepared.json.message, /a symbolic link the build certainly reads/, name);
+      assert.equal(prepared.json.listable, undefined, `${name}: it cannot be listed`);
+      assert.equal(fs.existsSync(out), false, name);
+    }
+  });
+
   it('rejects an input reached through a linked directory', () => {
     const outside = temporaryDirectory('fvs-extract-outside-');
     fs.mkdirSync(path.join(outside, 'src'));

@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const MODES = ['translation-patches', 'legacy-source-ledger'];
 const DEFAULT_INPUTS = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src'];
@@ -53,24 +54,44 @@ function refuse(code, message, details) {
 function usage() {
   process.stdout.write([
     'Usage: node fvs-extract-patches.mjs check --project-root DIR [--format json|text]',
-    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs prepare --project-root DIR --out DIR [--release DIR [--lock update]] [--format json|text]',
     '       node fvs-extract-patches.mjs verify-restore --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs verify-tree --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs status --out DIR [--format json|text]',
     '       node fvs-extract-patches.mjs migrate --project-root DIR [--format json|text]',
     '       node fvs-extract-patches.mjs attempt --out DIR --spec FILE [--format json|text]',
-    '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--format json|text]',
-    '       node fvs-extract-patches.mjs attempt-status --out DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs run --out DIR --step charon|aeneas|publish [--crate NAME] [--format json|text]',
+    '       node fvs-extract-patches.mjs attempt-status --out DIR [--crate NAME] [--format json|text]',
+    '       node fvs-extract-patches.mjs crates (--out DIR | --project-root DIR) --release DIR [--format json|text]',
+    '       node fvs-extract-patches.mjs trim-workspace --project-root DIR --release DIR --keep CRATE[,CRATE...] [--dev-dependencies keep|drop] [--format json|text]',
     '',
     'Applies the translation patches in DIR/translation-patches, in the order listed',
     'in DIR/translation-patches/series (one file name per line, every patch exactly',
     'once), to a disposable copy of the Rust extraction input set (extraction.inputs',
     'in .formalising/fvs-config.json, default Cargo.toml, Cargo.lock, build.rs, src).',
+    'A symbolic link the build certainly reads (a manifest, lock, build script, toolchain or cargo',
+    'configuration file, a Rust source file, anything under src, or an input itself) is refused. Any',
+    'other link under the inputs is refused too, unless the owner lists it in extraction.unreadLinks',
+    '([{ path, reason }]): a listed link is not copied, and check lists it (links) and the manifest',
+    'records it (source.links) with its target and reason. A listed path that is no such link is',
+    'refused. crates --project-root proposes the list, with each link\'s target.',
     'The original checkout is never written. check rehearses the list in a temporary',
     'copy; prepare builds OUT/tree and OUT/manifest.json (OUT must be a new directory',
     'outside the project); verify-restore compares the touched original sources with',
     'the recorded start; verify-tree compares every file under OUT/tree, except cargo\'s',
     'target/ directory, with the tree prepare recorded; status reads the manifest.',
+    'The manifest records the Cargo.lock of the copy (origin read, or absent), apart from the',
+    'source state: an uncommitted or ignored root Cargo.lock is not a dirty input, and',
+    'verify-restore also checks that the project\'s own lock is the one recorded at the start. A project',
+    'without one is refused by attempt, because cargo would write one into the copy; prepare',
+    '--lock update --release DIR brings the lock of the copy in line with the patched',
+    'manifests once: generated when there is none, otherwise updated keeping every pinned',
+    'version (cargo update --workspace). It may need network access, records the origin and',
+    'hashes, and never touches the checkout. With --release, prepare also records the',
+    'workspace: the in-repo crates before and after the patches (cargo only reads). A',
+    'multi-crate attempt needs it, and every in-repo library crate must then be a target,',
+    'a nonTargets entry, or a dropped entry ({crate, reason}) when it is not in the copy;',
+    'a path dependency a patch removed has to be listed as dropped too.',
     'migrate turns an active legacy src-modifications ledger into translation patches',
     '(one per hunk, entries from src-modifications.json kept verbatim) and marks the',
     'ledger inactive in place with src-modifications.inactive.json; it never edits',
@@ -83,6 +104,33 @@ function usage() {
     '(charon, aeneas, publish), under the controlled environment, and records its outputs',
     'when it exits; a failed or interrupted stage ends the attempt. attempt-status',
     're-validates the whole chain and the current output hashes.',
+    '',
+    'A spec with a crates list (and main) records one attempt per in-repo target crate',
+    'inside the one prepared copy, under DIR/units/<crate>: every crate has its own',
+    'Charon, Aeneas and publish chain, so a failing crate ends only its own chain. run',
+    'then needs --crate NAME. attempt-status refuses unless every crate is complete and',
+    'lists each crate\'s status; its run is the main crate\'s, plus run.units.',
+    '',
+    'crates lists the in-repo crates of a prepared copy (--out) or of a fresh checkout',
+    '(--project-root): package, crate name, directory, the in-repo crates it depends on, and',
+    'a dependency order, providers first, so a multi-crate spec can start from every crate as',
+    'a target and drop the ones the owner decides not to verify. It runs cargo metadata',
+    '--no-deps --offline under the toolchain of the release directory (relative to the project',
+    'root) and changes nothing; it is advisory. On a copy it also names the path dependencies',
+    'the patches removed and the packages the copy lacks; on a checkout it proposes the',
+    'extraction.inputs a copy needs.',
+    '',
+    'trim-workspace prints, and writes nothing, the translation patches that cut the workspace down to',
+    'the crates in --keep (crate or package names) and every in-repo crate they need by path: the',
+    'members list of the root manifest loses the rest, and a root package that is not kept loses its',
+    'package tables so the workspace is virtual. With --dev-dependencies drop, path dev-dependencies',
+    'on crates that are not kept are removed from the kept manifests instead of keeping those crates.',
+    'The result names the kept and left-out crates (the library ones are what the spec lists as',
+    'dropped), the extraction.inputs the trimmed copy needs, and each patch with its sha256. cargo',
+    'reads the trimmed workspace, and every patch is applied to a clean copy of the originals, before',
+    'anything is printed. A symbolic link inside the kept crates, a members pattern, a manifest the',
+    'trim cannot read line by line, or a path dependency outside the checkout is refused. The owner',
+    'decides; installing the patches and the inputs is a separate, approved step.',
     '',
     'Exit codes: 0 ok; 1 a patch does not fit (stale, already applied, not reversible,',
     'or not independent although it declares Independent: yes); 2 usage or internal',
@@ -272,18 +320,66 @@ function resolveMode(projectRoot, config, files, patches) {
   return mode;
 }
 
-// Every regular file in the input set with its content hash and mode. Links
-// are rejected, never followed or copied: a followed link would extract
-// content from outside the input set, and a copied one would write through to
-// the original checkout or a shared planning directory.
-function walkInputs(root, inputs) {
+// A symbolic link the Rust build certainly reads, whatever anyone says: a manifest, lock, build
+// script, toolchain or cargo configuration file, a Rust source file, anything named or placed
+// under src or .cargo, or an input itself. Such a link is always refused; the owner replaces it by
+// its content or leaves its crate out.
+//
+// Every other link is refused too, unless the owner lists it in extraction.unreadLinks with the
+// reason it is not a build input. A copy holds regular files only, so a link is left out of it, and
+// a build script, include_str! or include_bytes! may read a file with any name and fall back
+// silently when it is missing: the engine cannot tell from a name that no build reads the link,
+// so leaving one out is the owner's recorded decision and never a guess.
+const RUST_LINK_NAMES = new Set(['Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain', 'rust-toolchain.toml', 'src', '.cargo']);
+function isRustInputLink(relative, declared) {
+  const parts = relative.split('/');
+  return declared || relative.endsWith('.rs') || RUST_LINK_NAMES.has(parts[parts.length - 1]) || parts.slice(0, -1).some((part) => part === 'src' || part === '.cargo');
+}
+
+// extraction.unreadLinks: [{ path, reason }], the links under extraction.inputs the owner decided
+// the build does not read, by project-relative path, each with the reason. A path that holds no
+// such link is refused where the inputs are walked.
+function unreadLinks(config) {
+  const listed = config.extraction?.unreadLinks;
+  const found = new Map();
+  if (listed === undefined) return found;
+  if (!Array.isArray(listed)) refuse('invalid-input', 'extraction.unreadLinks must be an array of { path, reason }');
+  listed.forEach((entry, index) => {
+    const where = `extraction.unreadLinks[${index}]`;
+    if (!isObject(entry) || Object.keys(entry).some((key) => !['path', 'reason'].includes(key))) refuse('invalid-input', `${where} must be an object with only path and reason`);
+    if (typeof entry.path !== 'string' || path.isAbsolute(entry.path) || entry.path.split('/').some((part) => ['', '.', '..'].includes(part) || FORBIDDEN_SEGMENTS.has(part))) {
+      refuse('invalid-input', `${where}.path ${JSON.stringify(entry.path)} must be a plain project-relative path outside .git, .formalising and .planning`);
+    }
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say why the build does not read ${entry.path}`);
+    if (found.has(entry.path)) refuse('invalid-input', `extraction.unreadLinks lists ${entry.path} more than once`);
+    found.set(entry.path, entry.reason);
+  });
+  return found;
+}
+
+// Every regular file in the input set with its content hash and mode. A link is never
+// followed or copied: a followed link would extract content from outside the input set, and a
+// copied one would write through to the original checkout or a shared planning directory. A link
+// the build certainly reads is refused; with SKIPPED (an array) a link the owner listed in UNREAD
+// (path to reason) is left out of the copy and recorded there with its target and reason, and any
+// other link is refused. An entry of UNREAD that is not a link under the inputs is refused. A copy
+// is walked without SKIPPED: it must hold no link at all.
+function walkInputs(root, inputs, skipped = null, unread = new Map()) {
   const files = {};
-  function visit(relative) {
+  function visit(relative, declared = false) {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
     if (!stat) return; // an input a patch deleted from the copy
     if (stat.isSymbolicLink()) {
-      refuse('invalid-input', `${relative} is a symbolic link; the extraction input set takes only regular files, so replace it with the intended content or leave it out of extraction.inputs`, { kind: 'symlink', path: relative });
+      const target = fs.readlinkSync(absolute);
+      if (skipped !== null && !isRustInputLink(relative, declared)) {
+        if (unread.has(relative)) {
+          skipped.push({ path: relative, target, reason: unread.get(relative) });
+          return;
+        }
+        refuse('invalid-input', `${relative} is a symbolic link (to ${target}); a copy holds regular files only and the build may read a link of any name, so replace it with the intended content, leave its crate out of extraction.inputs, or, only when the build does not read it, list it in extraction.unreadLinks with the reason`, { kind: 'symlink', path: relative, target, listable: true });
+      }
+      refuse('invalid-input', `${relative} is a symbolic link${skipped !== null ? ' the build certainly reads (a manifest, lock, build script, toolchain or cargo configuration file, a Rust source file, anything under src, or an input itself), so it cannot be listed in extraction.unreadLinks' : ''}; the extraction input set takes only regular files, so replace it with the intended content or leave it out of extraction.inputs`, { kind: 'symlink', path: relative, target });
     }
     if (stat.isDirectory()) {
       for (const name of fs.readdirSync(absolute).sort()) visit(`${relative}/${name}`);
@@ -293,7 +389,11 @@ function walkInputs(root, inputs) {
       refuse('invalid-input', `unsupported file type in the extraction input set: ${relative}`, { path: relative });
     }
   }
-  for (const input of inputs) visit(input);
+  for (const input of inputs) visit(input, true);
+  if (skipped !== null) {
+    const missing = [...unread.keys()].filter((listed) => !skipped.some((link) => link.path === listed));
+    if (missing.length > 0) refuse('invalid-input', `extraction.unreadLinks lists ${missing.join(', ')}, which ${missing.length === 1 ? 'is' : 'are'} not a symbolic link under extraction.inputs (missing, a regular file or directory, outside the inputs, or a link the build certainly reads); remove the entry`, { kind: 'stale-unread-link', paths: missing });
+  }
   return files;
 }
 
@@ -310,7 +410,10 @@ function sourceIdentity(projectRoot, inputs) {
   ];
   const failed = listed.find((result) => result.status !== 0);
   if (failed) throw new Error(`cannot read the git status of ${projectRoot}: ${failed.stderr.trim()}`);
-  const dirty = listed.flatMap((result) => result.stdout.split('\0')).filter(Boolean);
+  // The root Cargo.lock is not source: many projects ignore or never commit it. The manifest
+  // records it with its own origin and hash instead, and restore checks it on its own. Every
+  // other uncommitted input stays dirty.
+  const dirty = listed.flatMap((result) => result.stdout.split('\0')).filter((file) => file !== '' && file !== LOCK_FILE);
   return { commit: head.stdout.trim(), dirty: [...new Set(dirty)].sort() };
 }
 
@@ -329,11 +432,15 @@ function load(projectRootFlag) {
   const config = readConfig(projectRoot);
   const inputs = inputPaths(projectRoot, config);
   const patches = readPatches(projectRoot);
-  const files = walkInputs(projectRoot, inputs);
+  const links = [];
+  const files = walkInputs(projectRoot, inputs, links, unreadLinks(config));
   const mode = resolveMode(projectRoot, config, files, patches);
   refuseOutsideInputs(patches, inputs);
   const touched = [...new Set(patches.flatMap((patch) => patch.touches))].sort();
-  return { projectRoot, inputs, patches, mode, files, touched, ...sourceIdentity(projectRoot, inputs) };
+  // A link left out of the copy is not an input, so a change to it is not a dirty input.
+  const identity = sourceIdentity(projectRoot, inputs);
+  const skipped = new Set(links.map((link) => link.path));
+  return { projectRoot, inputs, patches, mode, files, links, touched, ...identity, dirty: identity.dirty === null ? null : identity.dirty.filter((file) => !skipped.has(file)) };
 }
 
 function gitEnv(extra = {}) {
@@ -454,6 +561,11 @@ function check(flags) {
     message: `${records.length} translation patch(es) apply in order and undo to the exact starting state`,
     mode: context.mode,
     inputs: context.inputs,
+    // The commit the inputs start from and the input paths that differ from it (modified,
+    // staged, deleted or untracked); both null outside a git checkout.
+    source: { commit: context.commit, dirty: context.dirty },
+    // Symbolic links under the inputs that the owner listed as unread by the build (extraction.unreadLinks): not copied.
+    links: context.links,
     patches: records,
   };
 }
@@ -473,7 +585,42 @@ function writeManifest(out, manifest) {
   fs.writeFileSync(path.join(out, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+const LOCK_FILE = 'Cargo.lock';
+
+// The environment cargo runs in for the engine's own cargo calls: the caller's home
+// directories, the cargo bin directory, and the release's pinned toolchain.
+function cargoEnvironment(release) {
+  const homes = homesOf(process.env);
+  for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
+    if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
+  }
+  return { HOME: homes.HOME, RUSTUP_HOME: homes.RUSTUP_HOME, CARGO_HOME: homes.CARGO_HOME, PATH: `${path.join(homes.CARGO_HOME, 'bin')}:/usr/bin:/bin`, RUSTUP_TOOLCHAIN: release.tools.rustToolchain.channel };
+}
+
+// Brings the lock of the copy in line with its patched manifests, once, before the copy
+// is recorded: cargo would otherwise rewrite it during the build, and the copy would then
+// differ from the recorded tree. A project without a lock gets one generated; a lock the
+// project has keeps every version it pins (cargo update --workspace only adds and prunes
+// what the manifests changed). Resolution may need the registry index (network). The
+// result is recorded by hash with its origin (generated, updated, or read when nothing
+// had to change, with the hash it started from when it did) and the checkout is not touched.
+function updateLock(context, tree, releaseFlag) {
+  const release = releaseTools(path.resolve(context.projectRoot, releaseFlag));
+  const before = fileState(path.join(tree, LOCK_FILE));
+  const command = before === null ? ['generate-lockfile'] : ['update', '--workspace'];
+  const run = spawnSync('cargo', command, { env: cargoEnvironment(release), cwd: tree, encoding: 'utf8' });
+  const after = fileState(path.join(tree, LOCK_FILE));
+  if (run.status !== 0 || after === null) {
+    const lines = `${run.stderr ?? ''}`.split('\n').map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
+    refuse('tool-failed', `cargo ${command.join(' ')} failed in the extraction copy${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+  }
+  if (before === null) return { origin: 'generated' };
+  return before.sha256 === after.sha256 ? { origin: 'read' } : { origin: 'updated', from: before.sha256 };
+}
+
 function prepare(flags) {
+  if (flags.lock !== undefined && flags.lock !== 'update') refuse('usage', '--lock accepts only "update"');
+  if (flags.lock === 'update' && flags.release === undefined) refuse('usage', '--lock update needs --release DIR: the release\'s toolchain runs cargo');
   const context = load(flags['project-root']);
   const out = resolveOut(flags.out, context.projectRoot);
   const tree = path.join(out, 'tree');
@@ -485,7 +632,7 @@ function prepare(flags) {
     projectRoot: context.projectRoot,
     tree,
     mode: context.mode,
-    source: { inputs: context.inputs, commit: context.commit, dirty: context.dirty, files: context.files },
+    source: { inputs: context.inputs, commit: context.commit, dirty: context.dirty, files: context.files, links: context.links },
     touched: context.touched,
     patches: [],
     failure: null,
@@ -498,12 +645,22 @@ function prepare(flags) {
       throw new Error('the rehearsal copy reached different states from the extraction copy');
     }
     refuseChangedOriginals(manifest);
+    const updated = flags.lock === 'update' ? updateLock(context, tree, flags.release) : null;
     // The exact tree handed to the next stage: the touched set's hash and every file in the
     // copy. A completed tree holding any link is refused before it is recorded.
     const files = copyState(tree);
+    // With the release, the workspace is read before and after the patches (cargo only reads),
+    // and the copy must be the same afterwards.
+    const workspace = flags.release === undefined ? null : workspaceInventory(context.projectRoot, tree, flags.release);
+    if (workspace !== null && !sameState(files, copyState(tree))) refuse('internal', 'reading the workspace changed the extraction copy');
+    if (workspace !== null) manifest.workspace = workspace;
+    // The scope is always recorded: from cargo's inventory with the release, otherwise from a static
+    // scan that claims a single crate only when the manifests positively show one.
+    manifest.scope = workspace !== null ? cargoScope(workspace) : staticScope(context.projectRoot, tree, context.files, files);
     const link = Object.keys(files).find((file) => files[file].link !== undefined);
     if (link) refuseCopyLink(link);
     manifest.final = { touchedSha256: sha256(JSON.stringify(touchedState(tree, context.touched))), files };
+    manifest.lock = { path: LOCK_FILE, origin: updated?.origin ?? (files[LOCK_FILE] ? 'read' : 'absent'), sha256: files[LOCK_FILE]?.sha256 ?? null, ...(updated?.from ? { from: updated.from } : {}) };
     manifest.status = 'prepared';
   } catch (error) {
     manifest.failure = error instanceof Refusal
@@ -537,10 +694,23 @@ function refuseChangedOriginals(manifest) {
   }
 }
 
+// The project's own Cargo.lock against the state recorded before prepare, whatever the
+// copy's lock turned out to be (read, generated or updated): a copy built against a lock
+// the project no longer has is not the extraction of this project.
+function refuseChangedLock(manifest) {
+  if (!manifest.lock || !manifest.source.files) return;
+  const start = manifest.source.files[LOCK_FILE] ?? null;
+  const now = fileState(path.join(manifest.projectRoot, LOCK_FILE));
+  if (!sameState(now, start)) {
+    refuse('dirty-original', `the project's ${LOCK_FILE} ${now === null ? 'is gone' : start === null ? 'appeared' : 'changed'} since prepare recorded its start (${start?.sha256?.slice(0, 12) ?? 'none'}), so the lock this extraction used (${manifest.lock.origin}, ${manifest.lock.sha256?.slice(0, 12) ?? 'none'}) no longer comes from this project`, { lock: { start: start?.sha256 ?? null, now: now?.sha256 ?? null, origin: manifest.lock.origin } });
+  }
+}
+
 function verifyRestore(flags) {
   const manifest = readManifest(flags.out);
   refuseChangedOriginals(manifest);
-  return { message: `${manifest.touched.length} touched source file(s) match the recorded start`, touched: manifest.touched };
+  refuseChangedLock(manifest);
+  return { message: `${manifest.touched.length} touched source file(s) match the recorded start${manifest.lock ? `, and so does the project's ${LOCK_FILE}` : ''}`, touched: manifest.touched };
 }
 
 function status(flags) {
@@ -585,7 +755,8 @@ function verifyTree(flags) {
   const changed = [...new Set([...Object.keys(actual), ...Object.keys(recorded)])].sort()
     .filter((relative) => !sameState(actual[relative] ?? null, recorded[relative] ?? null));
   if (changed.length > 0) {
-    refuse('changed-tree', `the extraction copy differs from the recorded tree: ${changed.join(', ')}`, { changed });
+    const lock = changed.includes(LOCK_FILE) ? ` (${LOCK_FILE} is the lock recorded as ${manifest.lock?.origin ?? 'unknown'}, ${manifest.lock?.sha256?.slice(0, 12) ?? 'none'}: cargo or a tool rewrote it in the copy)` : '';
+    refuse('changed-tree', `the extraction copy differs from the recorded tree: ${changed.join(', ')}${lock}`, { changed });
   }
   return { message: `the extraction copy matches the recorded tree (${Object.keys(recorded).length} file(s))`, touchedSha256: manifest.final.touchedSha256 };
 }
@@ -651,13 +822,14 @@ function migratedPatch(entry, hunk, index) {
 function migrate(flags) {
   if (!fs.existsSync(flags['project-root'])) refuse('usage', `--project-root ${flags['project-root']} does not exist`);
   const projectRoot = fs.realpathSync(flags['project-root']);
-  const inputs = inputPaths(projectRoot, readConfig(projectRoot));
+  const config = readConfig(projectRoot);
+  const inputs = inputPaths(projectRoot, config);
   const directory = path.join(projectRoot, PATCH_DIR);
   refuseLinkedDirectory(projectRoot, PATCH_DIR);
   if (fs.existsSync(directory) && fs.readdirSync(directory).some((name) => name.endsWith('.patch') || name === SERIES)) {
     refuse('mixed-mode', `${PATCH_DIR}/ already holds a patch list; migration writes a new list and never merges into one`);
   }
-  const files = walkInputs(projectRoot, inputs);
+  const files = walkInputs(projectRoot, inputs, [], unreadLinks(config));
   const diffs = legacyLedger(projectRoot, files).active.filter((file) => path.posix.basename(file) === LEDGER_DIFF);
   if (diffs.length !== 1) {
     refuse('invalid-input', diffs.length === 0
@@ -855,9 +1027,217 @@ function canonicalConfig(value, out, projectRoot) {
   return JSON.parse(JSON.stringify(value), (key, item) => (typeof item === 'string' ? item.split(out).join('$OUT').split(projectRoot).join('$PROJECT') : item));
 }
 
-const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs'];
-const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas'];
+const SPEC_FIELDS = ['release', 'crate', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch', 'dropped'];
+const INVOCATION_FIELDS = ['spec', 'crate', 'llbc', 'aeneasDest', 'publishDir', 'projectRoot', 'tree', 'release', 'tools', 'env', 'charon', 'aeneas', 'targets', 'nonTargets'];
 const TRUST = 'local-host-and-reviewed-scripts';
+
+// A multi-crate spec: the top-level fields are the base, every entry of crates
+// is an overlay, and each crate gets its own attempt chain inside the one
+// prepared copy, under OUT/units/<crate>.
+const UNITS_DIR = 'units';
+const MULTI_SCHEMA = 'fvs-extract-patches/multi-attempt';
+const MULTI_SPEC_FIELDS = ['release', 'cargoArgs', 'charonArgs', 'aeneasArgs', 'crates', 'main', 'nonTargets', 'dropped'];
+const UNIT_FIELDS = ['crate', 'package', 'dir', 'publishDir', 'charonArgs', 'cargoArgs', 'aeneasArgs', 'moduleRoot', 'substitutions', 'stitch'];
+const CRATE_NAME = /^[A-Za-z0-9_]+$/;
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Edits to the generated Lean are declared in the spec, never made by hand:
+// exact text substitutions with the match count they must find, and stitching a
+// crate to the crate whose real translation replaces its axioms.
+const LEAN_MODULE = /^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$/;
+const RUST_PATH = /^[A-Za-z0-9_]+(::[A-Za-z0-9_]+)*$/;
+const SUBSTITUTION_FIELDS = ['file', 'find', 'replace', 'count', 'reason'];
+// A substitution renames a name that Lean cannot read, and does nothing else. Aeneas writes
+// a shadowed local as `len·`, which a Lean identifier cannot contain. The characters that
+// qualify are listed, and the list grows only from output a real Aeneas wrote.
+const UNREADABLE_NAME_CHARS = ['\u00b7'];
+const NAME_FRAGMENT = /^[\p{L}\p{N}_'\u00b7]+$/u;
+const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_']*$/;
+const STITCH_FIELDS = ['crate', 'assume'];
+const PUBLISH_DEST = 'publish-dest';
+
+function checkSubstitutions(list) {
+  if (!Array.isArray(list)) refuse('invalid-input', 'spec.substitutions must be an array');
+  return list.map((entry, index) => {
+    const where = `substitutions[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !SUBSTITUTION_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    const relative = typeof entry.file === 'string' ? path.posix.normalize(entry.file) : '';
+    if (!relative.endsWith('.lean') || path.posix.isAbsolute(relative) || relative.split('/').includes('..')) refuse('invalid-input', `${where}.file must name a generated Lean file, relative to the Aeneas output`);
+    if (relative.split('/').some((part) => part.toLowerCase() === 'trusted')) refuse('invalid-input', `${where}.file is under a Trusted directory; a substitution edits generated Lean only, never a Trusted file`);
+    if (typeof entry.find !== 'string' || entry.find === '') refuse('invalid-input', `${where}.find must be the exact non-empty text to replace`);
+    if (typeof entry.replace !== 'string') refuse('invalid-input', `${where}.replace must be a string`);
+    if (!NAME_FRAGMENT.test(entry.find) || !UNREADABLE_NAME_CHARS.some((char) => entry.find.includes(char))) {
+      refuse('invalid-input', `${where}.find must be part of a name that Lean cannot read, which holds one of ${UNREADABLE_NAME_CHARS.map((char) => `U+${char.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(', ')} (such as "len·"); a substitution only renames such a name, and any other change to the translation is a translation patch of the Rust source`);
+    }
+    if (!PLAIN_IDENTIFIER.test(entry.replace)) refuse('invalid-input', `${where}.replace must be a plain identifier (ASCII letters, digits, _ and ')`);
+    if (!Number.isInteger(entry.count) || entry.count < 1) refuse('invalid-input', `${where}.count must be the exact number of matches (at least 1)`);
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say why the generated Lean needs this edit`);
+    return { file: relative, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason };
+  }).map((entry, index, all) => {
+    const clash = all.findIndex((other, at) => at !== index && other.replace === entry.replace);
+    if (clash !== -1) refuse('invalid-input', `substitutions[${index}].replace ${JSON.stringify(entry.replace)} is also used by substitutions[${clash}]: two renames never share a new name`);
+    return entry;
+  });
+}
+
+function checkStitch(list, crate, targets) {
+  if (!Array.isArray(list)) refuse('invalid-input', 'spec.stitch must be an array');
+  if (list.length > 0 && targets.length === 0) refuse('invalid-input', 'stitch needs a multi-crate spec: the crate it imports must be another crate of the same attempt');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `stitch[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !STITCH_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (entry.crate === crate) refuse('invalid-input', `${where}.crate names the crate itself`);
+    if (!targets.some((target) => target.crate === entry.crate)) refuse('invalid-input', `${where}.crate ${entry.crate} is not a crate of this attempt (${targets.map((target) => target.crate).join(', ')})`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `stitch names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    const assume = entry.assume ?? [];
+    if (!Array.isArray(assume) || assume.some((item) => typeof item !== 'string' || !RUST_PATH.test(item) || item.split('::')[0] !== entry.crate)) {
+      refuse('invalid-input', `${where}.assume must list Rust paths of crate ${entry.crate} (a module or an item, such as ${entry.crate}::some_module)`);
+    }
+    if (assume.some((item) => !item.includes('::'))) refuse('invalid-input', `${where}.assume names the whole crate ${entry.crate}; list the modules or items it does not define (such as ${entry.crate}::some_module), because everything it defines is stitched`);
+    return { crate: entry.crate, assume: [...assume].sort() };
+  });
+}
+
+// The manifest, the tree and the verify checks belong to the copy OUT; a
+// crate's own attempt lives in OUT/units/<crate>.
+function copyRoot(out) {
+  if (lexists(path.join(out, MANIFEST))) return out;
+  const copy = path.dirname(path.dirname(out));
+  return path.basename(path.dirname(out)) === UNITS_DIR && lexists(path.join(copy, MANIFEST)) ? copy : out;
+}
+
+// Charon labels a crate with its underscored name; the hyphenated one belongs to --package.
+function checkCrateName(where, name) {
+  if (typeof name === 'string' && name.includes('-') && CRATE_NAME.test(name.replace(/-/g, '_'))) {
+    refuse('invalid-input', `${where} ${JSON.stringify(name)} has a hyphen; Charon labels a crate with its underscored name, so use ${JSON.stringify(name.replace(/-/g, '_'))} (the hyphenated name is the --package name)`, { field: where });
+  }
+  if (typeof name !== 'string' || !CRATE_NAME.test(name)) refuse('invalid-input', `${where} must be a crate name (letters, digits and underscores)`, { field: where });
+}
+
+// In-repo crates the owner decided not to verify. They are named, never hidden: Charon
+// reaches their sources, the LLBC check accepts them under their own label and records
+// their tree-pinned hashes, and only their items may become assumptions.
+function checkNonTargets(list, units, manifest) {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) refuse('invalid-input', 'nonTargets must be an array');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `nonTargets[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !['crate', 'dir'].includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (units.some((unit) => unit.crate === entry.crate)) refuse('invalid-input', `${where}.crate ${entry.crate} is also a target; a crate is either verified or not`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `nonTargets names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    const dir = typeof entry.dir === 'string' ? path.posix.normalize(entry.dir) : '';
+    if (dir === '' || path.isAbsolute(dir) || dir.split('/').includes('..')) refuse('invalid-input', `${where}.dir must be the crate directory inside the extraction copy, relative to its root`);
+    if (!Object.hasOwn(manifest.final.files, path.posix.join(dir, 'Cargo.toml'))) refuse('invalid-input', `${where}.dir ${dir} holds no Cargo.toml in the extraction copy; add it to extraction.inputs`, { field: `${where}.dir` });
+    if (units.some((unit) => unit.dir === dir)) refuse('invalid-input', `${where}.dir ${dir} is the directory of target crate ${units.find((unit) => unit.dir === dir).crate}`);
+    return { crate: entry.crate, dir };
+  });
+}
+
+// The units of a multi-crate spec, each as an ordinary single-crate spec. An
+// overlay field replaces the base field (lists are replaced, never joined), and
+// the unit's package becomes its --package argument. Nothing is written here.
+function multiUnits(spec, manifest) {
+  const unknown = Object.keys(spec).filter((key) => !MULTI_SPEC_FIELDS.includes(key));
+  if (unknown.length > 0) refuse('invalid-input', `a multi-crate spec has unsupported fields: ${unknown.join(', ')} (crate and publishDir belong to each entry of crates)`);
+  if (!Array.isArray(spec.crates) || spec.crates.length === 0) refuse('invalid-input', 'crates must be a non-empty array');
+  const units = spec.crates.map((entry, index) => {
+    const where = `crates[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !UNIT_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (typeof entry.package !== 'string' || !/^[A-Za-z0-9_-]+$/.test(entry.package)) refuse('invalid-input', `${where}.package must be the Cargo package name`);
+    const dir = typeof entry.dir === 'string' ? path.posix.normalize(entry.dir) : '';
+    if (dir === '' || path.isAbsolute(dir) || dir.split('/').includes('..')) refuse('invalid-input', `${where}.dir must be the crate directory inside the extraction copy, relative to its root`);
+    if (!Object.hasOwn(manifest.final.files, path.posix.join(dir, 'Cargo.toml'))) refuse('invalid-input', `${where}.dir ${dir} holds no Cargo.toml in the extraction copy; add it to extraction.inputs`, { field: `${where}.dir` });
+    const cargoArgs = entry.cargoArgs ?? spec.cargoArgs ?? [];
+    if (!Array.isArray(cargoArgs)) refuse('invalid-input', `${where}.cargoArgs must be an array of strings`);
+    if (cargoArgs.includes('--package')) refuse('invalid-input', `${where}.cargoArgs must not carry --package; set package instead`);
+    return {
+      crate: entry.crate,
+      package: entry.package,
+      dir,
+      flat: {
+        release: spec.release,
+        crate: entry.crate,
+        publishDir: entry.publishDir,
+        charonArgs: entry.charonArgs ?? spec.charonArgs ?? [],
+        cargoArgs: [...cargoArgs, '--package', entry.package],
+        aeneasArgs: entry.aeneasArgs ?? spec.aeneasArgs ?? [],
+        ...(entry.moduleRoot !== undefined ? { moduleRoot: entry.moduleRoot } : {}),
+        ...(entry.substitutions !== undefined ? { substitutions: entry.substitutions } : {}),
+        ...(entry.stitch !== undefined ? { stitch: entry.stitch } : {}),
+      },
+    };
+  });
+  for (const key of ['crate', 'package', 'dir']) {
+    const repeated = units.map((unit) => unit[key]).filter((value, index, all) => all.indexOf(value) !== index);
+    if (repeated.length > 0) refuse('invalid-input', `crates names ${key} ${repeated.join(', ')} more than once`);
+  }
+  if (typeof spec.main !== 'string' || !units.some((unit) => unit.crate === spec.main)) refuse('invalid-input', `main must name one of the crates (${units.map((unit) => unit.crate).join(', ')})`);
+  const published = units.map((unit) => (typeof unit.flat.publishDir === 'string' ? path.posix.normalize(unit.flat.publishDir) : null));
+  published.forEach((first, i) => published.forEach((second, j) => {
+    if (i < j && first !== null && second !== null && (first === second || first.startsWith(`${second}/`) || second.startsWith(`${first}/`))) {
+      refuse('invalid-input', `the publishDir of ${units[i].crate} (${first}) and of ${units[j].crate} (${second}) are the same or nested; every crate publishes into its own sibling directory`);
+    }
+  }));
+  return { units, main: spec.main, order: stitchOrder(units), nonTargets: checkNonTargets(spec.nonTargets, units, manifest) };
+}
+
+// The crates in dependency order, providers before the crates stitched to them. A crate
+// can only be stitched to a crate whose Lean module root is known, and a cycle is refused.
+function stitchOrder(units) {
+  const targets = units.map(({ crate, dir }) => ({ crate, dir }));
+  const providers = new Map(units.map((unit) => [unit.crate, checkStitch(unit.flat.stitch ?? [], unit.crate, targets).map((entry) => entry.crate)]));
+  for (const [crate, list] of providers) {
+    for (const provider of list) {
+      if (units.find((unit) => unit.crate === provider).flat.moduleRoot === undefined) refuse('invalid-input', `${crate} is stitched to ${provider}, which names no moduleRoot; the Lean module name of ${provider}'s published directory is needed to import it`);
+    }
+  }
+  const order = [];
+  const visiting = new Set();
+  const visit = (crate) => {
+    if (order.includes(crate)) return;
+    if (visiting.has(crate)) refuse('invalid-input', `stitching is circular through ${crate}; a crate can only import crates that do not import it`);
+    visiting.add(crate);
+    for (const provider of providers.get(crate)) visit(provider);
+    visiting.delete(crate);
+    order.push(crate);
+  };
+  for (const unit of units) visit(unit.crate);
+  return order;
+}
+
+// The roster of a multi-crate attempt: who is in it and how they are tied together, in one
+// canonical form (fixed key order, units in the attempt's order, every list sorted). Every unit's
+// attempt record carries it and so does the top-level record, and the hash of this form is what
+// a reader binds to. One unit left out of the status therefore changes the roster it recomputes.
+function rosterOf({ main, order, units, nonTargets, dropped }) {
+  const byCrate = (a, b) => (a.crate < b.crate ? -1 : a.crate > b.crate ? 1 : 0);
+  return {
+    main,
+    order: [...order],
+    units: order.map((crate) => {
+      const unit = units.find((entry) => entry.crate === crate);
+      return { crate, package: unit.package, dir: unit.dir, stitch: [...unit.stitch].sort() };
+    }),
+    nonTargets: nonTargets.map(({ crate, dir }) => ({ crate, dir })).sort(byCrate),
+    dropped: dropped.map(({ crate, reason }) => ({ crate, reason })).sort(byCrate),
+  };
+}
+const rosterSha256 = (roster) => sha256(JSON.stringify(roster));
 
 function homesOf(env) {
   const home = env.HOME;
@@ -872,11 +1252,11 @@ function homesOf(env) {
 // spec, the prepared manifest, the release and the three home paths. Recording
 // stores it; every stage derives it again, refuses any difference from the
 // record, and executes only the derived form.
-function deriveInvocation(out, manifest, spec, homes) {
+function deriveInvocation(out, manifest, spec, homes, targets = [], nonTargets = []) {
   if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) refuse('invalid-input', 'the spec must be a JSON object');
   const unknown = Object.keys(spec).filter((key) => !SPEC_FIELDS.includes(key));
-  if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}`);
-  if (typeof spec.crate !== 'string' || !/^[A-Za-z0-9_-]+$/.test(spec.crate)) refuse('invalid-input', 'spec.crate must be a crate name');
+  if (unknown.length > 0) refuse('invalid-input', `the spec has unsupported fields: ${unknown.join(', ')}${unknown.includes('nonTargets') ? ' (nonTargets belongs to a multi-crate spec: list this crate under crates)' : ''}`);
+  checkCrateName('spec.crate', spec.crate);
   const { projectRoot } = manifest;
   const publishRelative = typeof spec.publishDir === 'string' ? path.posix.normalize(spec.publishDir) : '';
   if (publishRelative === '' || publishRelative === '.' || path.isAbsolute(publishRelative) || publishRelative.split('/').includes('..')) {
@@ -887,6 +1267,11 @@ function deriveInvocation(out, manifest, spec, homes) {
   const charonArgs = checkArgs('charonArgs', spec.charonArgs ?? [], new Set(), CHARON_VALUED);
   const cargoArgs = checkArgs('cargoArgs', spec.cargoArgs ?? [], CARGO_FLAGS, CARGO_VALUED);
   checkArgs('aeneasArgs', spec.aeneasArgs ?? [], new Set(), {});
+  if (spec.moduleRoot !== undefined && (typeof spec.moduleRoot !== 'string' || !LEAN_MODULE.test(spec.moduleRoot))) {
+    refuse('invalid-input', 'spec.moduleRoot must be the Lean module name of the published directory, such as Project.Extraction.Crate');
+  }
+  const substitutions = checkSubstitutions(spec.substitutions ?? []);
+  const stitch = checkStitch(spec.stitch ?? [], spec.crate, targets);
   const release = releaseTools(path.resolve(projectRoot, spec.release));
   for (const name of ['HOME', 'RUSTUP_HOME', 'CARGO_HOME']) {
     if (typeof homes[name] !== 'string' || !path.isAbsolute(homes[name])) refuse('invalid-input', `${name} must be an absolute path`);
@@ -895,7 +1280,12 @@ function deriveInvocation(out, manifest, spec, homes) {
   const llbc = path.join(out, `${spec.crate}.llbc`);
   const aeneasDest = path.join(out, 'aeneas-dest');
   return {
-    spec: { release: spec.release, crate: spec.crate, publishDir: publishRelative, charonArgs, cargoArgs, aeneasArgs: [] },
+    spec: {
+      release: spec.release, crate: spec.crate, publishDir: publishRelative, charonArgs, cargoArgs, aeneasArgs: [],
+      ...(spec.moduleRoot !== undefined ? { moduleRoot: spec.moduleRoot } : {}),
+      ...(substitutions.length > 0 ? { substitutions } : {}),
+      ...(stitch.length > 0 ? { stitch } : {}),
+    },
     crate: spec.crate,
     llbc,
     aeneasDest,
@@ -907,6 +1297,10 @@ function deriveInvocation(out, manifest, spec, homes) {
     env,
     charon: { argv: ['cargo', '--preset=aeneas', '--dest-file', llbc, ...charonArgs, ...(cargoArgs.length > 0 ? ['--', ...cargoArgs] : [])], cwd: manifest.tree },
     aeneas: { argv: ['-backend', 'lean', '-emit-json', '-dest', aeneasDest, llbc], cwd: projectRoot },
+    // The declared crates of a multi-crate attempt (absent for a single crate), so the
+    // Charon stage can tell another declared crate's sources from an undeclared one.
+    ...(targets.length > 0 ? { targets } : {}),
+    ...(nonTargets.length > 0 ? { nonTargets } : {}),
   };
 }
 
@@ -932,7 +1326,7 @@ function configOf(invocation, identity, cargoConfig, out) {
 }
 
 function preparedManifest(out) {
-  const manifestFile = path.join(out, MANIFEST);
+  const manifestFile = path.join(copyRoot(out), MANIFEST);
   if (!fs.existsSync(manifestFile)) refuse('usage', `no manifest at ${manifestFile}`);
   const bytes = fs.readFileSync(manifestFile);
   const manifest = JSON.parse(bytes);
@@ -946,7 +1340,950 @@ function attempt(flags) {
   const out = path.resolve(flags.out);
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (lexists(path.join(out, ATTEMPT))) refuse('attempt-refused', 'this copy already has an attempt; prepare a new copy to retry');
-  const invocation = deriveInvocation(out, manifest, readJson(path.resolve(flags.spec)), homesOf(process.env));
+  if (manifest.lock?.origin === 'absent') {
+    refuse('attempt-refused', `the prepared copy has no ${LOCK_FILE}, so cargo would write one into the copy during the build and the copy would no longer match the recorded tree; put a ${LOCK_FILE} in the project (it need not be committed: its hash and origin are recorded), or prepare a new copy with --lock update --release DIR (it may need network access; the lock is recorded by hash)`);
+  }
+  const spec = readJson(path.resolve(flags.spec));
+  if (isObject(spec) && spec.crates !== undefined) return attemptUnits(out, manifest, manifestSha256, spec);
+  // The single-crate form is the legacy path, so a single crate has to be established, not assumed:
+  // an unknown scope (a workspace prepared without --release, or a copy that records none) is refused.
+  const scope = recordedScope(manifest);
+  if (scope.kind === 'unknown') {
+    refuse('attempt-refused', `the scope of this extraction is not established (${scope.reason}), and an attempt never takes an unknown scope for a single crate; prepare a new copy with --release DIR, so that cargo reads every in-repo crate`, { scope });
+  }
+  // The single-crate form accounts for no other crate of the workspace, so on a checkout that holds
+  // several library crates it would record one of them and leave the rest unmentioned. The aggregate
+  // form (a crates list) does the accounting: every library crate is a target, a non-target or
+  // dropped, each by the owner's decision, and one target is a legitimate crates list.
+  if (scope.kind === 'multi-crate') {
+    const crates = scope.libraryCrates ?? [];
+    refuse('attempt-refused', `the scope of this extraction is several crates (${crates.slice(0, 12).join(', ')}${crates.length > 12 ? ', ...' : ''}), and a single-crate attempt would record one of them with the others unaccounted for; attempt with a spec that has a crates list (one entry per target, and every other library crate in nonTargets or dropped by the owner's decision)`, { scope });
+  }
+  const unaccounted = coverageProblems(manifest, { targets: [], nonTargets: [], dropped: checkDropped(isObject(spec) ? spec.dropped : undefined), multi: false });
+  if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
+  return recordAttempt(out, manifest, manifestSha256, spec);
+}
+
+// The in-repo crates of a tree, as cargo sees them: package, crate name (the library
+// target's, which is what Charon labels items with), directory, and the in-repo crates
+// each one depends on (normal and build dependencies; dev-dependencies are not part of an
+// extraction), with a dependency order, providers first. This only proposes targets: a
+// crate that is neither declared a target nor a non-target is refused when Charon's output
+// is read. It runs `cargo metadata --no-deps --offline` (nothing is written), so a
+// workspace cargo cannot read (a missing member, inheritance without a workspace, a path
+// dependency without a manifest) is reported with cargo's own first error lines.
+//
+// With --out it describes the PATCHED copy Charon will build, and compares it with the
+// checkout: the path dependencies a patch removed and the packages the copy lacks. With
+// --project-root it describes a fresh checkout, before any copy exists, and proposes the
+// extraction.inputs that give a copy every in-repo crate cargo needs.
+const LIBRARY_KINDS = ['lib', 'rlib', 'dylib', 'cdylib', 'staticlib'];
+const first = (lines) => lines.map((line) => line.trim()).filter((line) => line !== '').slice(0, 6);
+
+function cargoMetadata(tree, env, where, manifestPath = null) {
+  const run = spawnSync('cargo', ['metadata', '--no-deps', '--offline', '--format-version', '1', ...(manifestPath ? ['--manifest-path', manifestPath] : [])], { env, cwd: tree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (run.status !== 0) {
+    const lines = first(`${run.stderr ?? ''}`.split('\n'));
+    refuse('tool-failed', `cargo cannot read the workspace of ${where}${lines.length > 0 ? `: ${lines.join(' | ')}` : ''}`, { reasons: lines });
+  }
+  try {
+    return JSON.parse(run.stdout);
+  } catch {
+    return refuse('tool-failed', 'cargo metadata did not return JSON');
+  }
+}
+
+const relativeTo = (tree, dir) => path.relative(tree, dir).split(path.sep).join('/') || '.';
+const realOrSelf = (file) => (fs.existsSync(file) ? fs.realpathSync(file) : file);
+const pathDependencies = (item) => item.dependencies.filter((dependency) => dependency.kind !== 'dev' && dependency.path);
+
+// The crates of a set of package rows, the in-repo crates each one depends on (through the rows
+// given: a provider that is not among them is not a dependency), and a dependency order,
+// providers first. A row that is not a workspace member says so (member: false).
+function crateRows(rows) {
+  const sorted = [...rows].sort((a, b) => a.dir.localeCompare(b.dir));
+  const byDir = new Map(sorted.map((row) => [row.abs, row]));
+  const crates = sorted.map((row) => ({
+    package: row.package,
+    crate: row.crate,
+    dir: row.dir,
+    library: row.library,
+    member: row.member !== false,
+    deps: [...new Set(pathDependencies(row.item).map((dependency) => byDir.get(realOrSelf(dependency.path)))
+      .filter((provider) => provider !== undefined && provider.library).map((provider) => provider.crate))].sort(),
+  }));
+  const order = [];
+  const visit = (row, seen = new Set()) => {
+    if (order.includes(row.crate) || seen.has(row.crate)) return;
+    seen.add(row.crate);
+    for (const dependency of row.deps) visit(crates.find((candidate) => candidate.crate === dependency), seen);
+    order.push(row.crate);
+  };
+  crates.filter((row) => row.library).forEach((row) => visit(row));
+  return { crates, order };
+}
+
+function describeWorkspace(tree, metadata) {
+  const rows = metadata.packages.map((item) => {
+    const dir = path.dirname(fs.realpathSync(item.manifest_path));
+    const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
+    return { package: item.name, crate: library ? library.name.replace(/-/g, '_') : null, dir: inside(dir, tree) || dir === tree ? relativeTo(tree, dir) : null, abs: dir, library: library !== undefined, item };
+  }).filter((row) => row.dir !== null).sort((a, b) => a.dir.localeCompare(b.dir));
+  const byDir = new Map(rows.map((row) => [row.abs, row]));
+  // --no-deps lists the workspace members only: a path dependency inside the tree that is
+  // not a member is not in the list above, so it is named here (workspaceView follows it).
+  const unlistedAbs = [...new Set(rows.flatMap((row) => pathDependencies(row.item).map((dependency) => realOrSelf(dependency.path))
+    .filter((dir) => !byDir.has(dir) && inside(dir, tree) && dir !== tree)))].sort();
+  return { rows, ...crateRows(rows), unlistedAbs, unlisted: unlistedAbs.map((dir) => relativeTo(tree, dir)) };
+}
+
+const crateName = (name) => name.replace(/-/g, '_');
+
+// The in-repo crates of a tree as cargo sees them, complete: the workspace members, the
+// path dependencies inside the tree that are not members, followed to any depth (cargo
+// metadata without dependencies lists members only, one manifest per call), and the members
+// whose real directory is outside the tree (a symbolic link), which a copy cannot hold.
+function workspaceView(tree, env, where) {
+  const metadata = cargoMetadata(tree, env, where);
+  const described = describeWorkspace(tree, metadata);
+  const outside = metadata.packages.filter((item) => !inside(path.dirname(fs.realpathSync(item.manifest_path)), tree) && path.dirname(fs.realpathSync(item.manifest_path)) !== tree)
+    .map((item) => ({ package: item.name, crate: crateName((item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind))) ?? { name: item.name }).name), library: item.targets.some((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind))), manifest: item.manifest_path }));
+  const seen = new Set(described.rows.map((row) => row.abs));
+  const rows = [...described.rows];
+  const queue = [...described.unlistedAbs];
+  const loose = [];
+  while (queue.length > 0) {
+    const dir = queue.shift();
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    const listed = cargoMetadata(tree, env, `${where}, ${relativeTo(tree, dir)}`, path.join(dir, 'Cargo.toml'));
+    for (const item of listed.packages) {
+      const home = path.dirname(fs.realpathSync(item.manifest_path));
+      if (home !== dir) continue;
+      const library = item.targets.find((target) => target.kind.some((kind) => LIBRARY_KINDS.includes(kind)));
+      rows.push({ package: item.name, crate: library ? crateName(library.name) : null, dir: relativeTo(tree, dir), abs: dir, library: library !== undefined, item, member: false });
+      loose.push(dir);
+      for (const dependency of pathDependencies(item)) {
+        const target = realOrSelf(dependency.path);
+        if (!seen.has(target) && inside(target, tree) && target !== tree) queue.push(target);
+      }
+    }
+  }
+  const byDir = new Map(rows.map((row) => [row.abs, row]));
+  return {
+    metadata,
+    described,
+    rows,
+    roster: crateRows(rows),
+    outside,
+    unlisted: loose.map((dir) => relativeTo(tree, dir)).sort(),
+    crates: [
+      ...rows.map((row) => ({ package: row.package, crate: row.crate, dir: row.dir, library: row.library, member: row.member !== false })),
+      ...outside.map((row) => ({ package: row.package, crate: row.crate, dir: null, library: row.library, member: true, outside: true })),
+    ],
+    pathDependencies: rows.flatMap((row) => pathDependencies(row.item).map((dependency) => ({ package: row.package, dependency: dependency.name, crate: byDir.get(realOrSelf(dependency.path))?.crate ?? crateName(dependency.name), dir: relativeTo(tree, realOrSelf(dependency.path)) }))),
+  };
+}
+
+// The workspace before and after the patches, recorded in the manifest when prepare is given
+// the release. Attempts check coverage against it: every in-repo library crate is a target, a
+// declared non-target, or declared dropped, and a path dependency a patch removed is declared
+// dropped too.
+function workspaceInventory(projectRoot, tree, releaseFlag) {
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, releaseFlag)));
+  const original = workspaceView(projectRoot, env, 'the checkout');
+  const copy = workspaceView(tree, env, 'the extraction copy');
+  const keep = (view) => ({ crates: view.crates, unlisted: view.unlisted });
+  const inCopy = new Set(copy.crates.map((row) => row.package));
+  const kept = new Set(copy.pathDependencies.map((dependency) => `${dependency.package}|${dependency.dependency}|${dependency.dir}`));
+  return {
+    original: keep(original),
+    copy: keep(copy),
+    notInCopy: original.crates.filter((row) => !inCopy.has(row.package)).map(({ package: name, crate, dir, library }) => ({ package: name, crate, dir, library })),
+    removedPathDependencies: original.pathDependencies.filter((dependency) => inCopy.has(dependency.package) && !kept.has(`${dependency.package}|${dependency.dependency}|${dependency.dir}`)).map(({ package: name, dependency, crate, dir }) => ({ package: name, dependency, crate, dir })),
+  };
+}
+
+// The in-repo library crates of the original checkout, by crate name: the one expression the
+// coverage gate and the scope record both use, so they cannot disagree about what the repository holds.
+function libraryCratesOf(inventory) {
+  return [...new Set(inventory.original.crates.filter((row) => row.library).map((row) => row.crate))].sort();
+}
+
+// What the copy is a copy of, recorded by prepare so that a single crate is always established and
+// never inferred from missing data. With --release cargo reads the checkout, and the scope is
+// multi-crate when it holds two or more library crates. Without it nothing reads cargo, so a single
+// crate is claimed only when the manifests positively show a lone package (staticScope); anything
+// else is unknown, and no attempt, record or acceptance treats unknown as single-crate.
+const SCOPE_KINDS = ['single-crate', 'multi-crate', 'unknown'];
+
+function cargoScope(inventory) {
+  const libraryCrates = libraryCratesOf(inventory);
+  return { kind: libraryCrates.length >= 2 ? 'multi-crate' : 'single-crate', basis: 'cargo', libraryCrates };
+}
+
+// The scope a prepared manifest records; a manifest without one (a copy prepared before the scope
+// was recorded, or an edited file) is unknown.
+function recordedScope(manifest) {
+  const scope = manifest.scope;
+  if (isObject(scope) && SCOPE_KINDS.includes(scope.kind)) return scope;
+  return { kind: 'unknown', basis: 'none', reason: 'the copy records no scope (it was prepared before the scope was recorded)' };
+}
+
+// Why a manifest is not plainly one package: any [workspace], [patch] or [replace] table, workspace
+// inheritance or a workspace key, a path dependency, a table the line reader cannot read, or no
+// [package] table. Null when none applies. A [lib] or [[bin]] path is a source file, not a crate.
+function loneManifestProblem(text, where) {
+  let layout;
+  try {
+    layout = tomlLayout(text, where);
+  } catch (error) {
+    if (error instanceof Refusal) return `${where} is a manifest the scan cannot read line by line`;
+    throw error;
+  }
+  if (!layout.tables.some((table) => table.header.length === 1 && table.header[0] === 'package')) return `${where} has no [package] table`;
+  for (const table of layout.tables) {
+    if (['workspace', 'patch', 'replace'].includes(table.header[0])) return `${where} has a [${table.header.join('.')}] table`;
+    const dependencies = table.header.some((part) => part.endsWith('dependencies'));
+    for (const entry of table.entries) {
+      const value = [layout.lines[entry.start].slice(entry.equals + 1), ...layout.lines.slice(entry.start + 1, entry.end + 1)].join('\n');
+      if (entry.key.includes('workspace') || /\bworkspace\s*=/.test(value)) return `${where} inherits from or names a workspace (${entry.key.join('.')})`;
+      if (dependencies && (entry.key.includes('path') || /\bpath\s*=/.test(value))) return `${where} has a path dependency (${[...table.header, ...entry.key].join('.')})`;
+    }
+  }
+  return null;
+}
+
+// Single crate without cargo: only when the project and the copy each hold one manifest, a plain
+// package, and no directory above the project or the copy holds a workspace manifest (cargo looks
+// upward for one). Anything cargo could read differently is unknown.
+function staticScope(projectRoot, tree, original, copy) {
+  const unknown = (reason) => ({ kind: 'unknown', basis: 'none', reason: `${reason}; prepare with --release DIR so that cargo reads the workspace` });
+  for (const [label, start] of [['the project', projectRoot], ['the extraction copy', tree]]) {
+    for (let dir = path.dirname(start); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+      const above = path.join(dir, 'Cargo.toml');
+      if (!lexists(above)) continue;
+      let text = null;
+      try {
+        text = fs.readFileSync(above, 'utf8');
+      } catch {
+        return unknown(`${above}, above ${label}, cannot be read`);
+      }
+      if (/^\s*\[\s*workspace\b/m.test(text)) return unknown(`${above}, above ${label}, is a workspace manifest`);
+    }
+  }
+  for (const [label, files] of [['the inputs', original], ['the copy', copy]]) {
+    const found = Object.keys(files).filter((file) => path.basename(file) === 'Cargo.toml');
+    if (found.length !== 1 || found[0] !== 'Cargo.toml') return unknown(`${label} hold ${found.length === 0 ? 'no Cargo.toml' : `${found.length} Cargo.toml files (${found.slice(0, 4).join(', ')})`}, and a single crate is not established without cargo`);
+  }
+  for (const [label, file] of [['the project Cargo.toml', path.join(projectRoot, 'Cargo.toml')], ['the copy Cargo.toml', path.join(tree, 'Cargo.toml')]]) {
+    const problem = loneManifestProblem(fs.readFileSync(file, 'utf8'), label);
+    if (problem !== null) return unknown(problem);
+  }
+  return { kind: 'single-crate', basis: 'manifest', manifest: 'Cargo.toml' };
+}
+
+const DROPPED_FIELDS = ['crate', 'reason'];
+
+// In-repo crates the owner decided to leave out of the extraction copy, or that a patch
+// replaced by a registry release. They are named with a reason, never silently missing.
+function checkDropped(list) {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) refuse('invalid-input', 'dropped must be an array');
+  const seen = new Set();
+  return list.map((entry, index) => {
+    const where = `dropped[${index}]`;
+    if (!isObject(entry)) refuse('invalid-input', `${where} must be an object`);
+    const extra = Object.keys(entry).filter((key) => !DROPPED_FIELDS.includes(key));
+    if (extra.length > 0) refuse('invalid-input', `${where} has unsupported fields: ${extra.join(', ')}`);
+    checkCrateName(`${where}.crate`, entry.crate);
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') refuse('invalid-input', `${where}.reason must say who decided to leave the crate out and why`);
+    if (seen.has(entry.crate)) refuse('invalid-input', `dropped names crate ${entry.crate} more than once`);
+    seen.add(entry.crate);
+    return { crate: entry.crate, reason: entry.reason };
+  });
+}
+
+// Every in-repo library crate of the original workspace is accounted for by the spec, and
+// so is every path dependency a patch turned into a registry one.
+function coverageProblems(manifest, { targets, nonTargets, dropped, multi }) {
+  const inventory = manifest.workspace;
+  if (!inventory) {
+    return multi ? ['the copy was prepared without --release, so it records no workspace inventory; prepare a new copy with --release DIR so that every in-repo crate is accounted for'] : [];
+  }
+  const accounted = new Set([...targets.map((entry) => entry.crate), ...nonTargets.map((entry) => entry.crate), ...dropped.map((entry) => entry.crate)]);
+  const problems = [];
+  const inRepo = new Set(libraryCratesOf(inventory));
+  const present = new Set(inventory.copy.crates.filter((row) => row.library).map((row) => row.crate));
+  const removed = new Set(inventory.removedPathDependencies.map((row) => row.crate));
+  if (multi) {
+    const missing = [...inRepo].filter((crate) => !accounted.has(crate)).sort();
+    if (missing.length > 0) problems.push(`${missing.length} in-repo crate(s) of the workspace are neither a target, a non-target nor dropped: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ', ...' : ''}; every in-repo crate is a target unless the owner decides otherwise, and each crate left out is named in nonTargets (its sources are in the copy) or dropped (they are not)`);
+  }
+  const loose = inventory.removedPathDependencies.filter((row) => !dropped.some((entry) => entry.crate === row.crate));
+  if (loose.length > 0) problems.push(`a patch removed the path dependency on ${[...new Set(loose.map((row) => `${row.crate} (from ${row.package})`))].join(', ')}, so the build would use a registry release of an in-repo crate; name each crate in dropped with the owner's decision`);
+  for (const entry of dropped) {
+    if (!inRepo.has(entry.crate) && !removed.has(entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is not an in-repo crate of the workspace or a path dependency a patch removed`);
+    else if (targets.some((target) => target.crate === entry.crate) || nonTargets.some((other) => other.crate === entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is also a target or a non-target`);
+    else if (present.has(entry.crate)) problems.push(`dropped names crate ${entry.crate}, which is still in the extraction copy; a crate is either in the copy or dropped`);
+  }
+  return problems;
+}
+
+// What a copy of a fresh checkout must hold for cargo to read it: the workspace manifest
+// and lock, every member and in-repo path dependency, and, for a root package, the
+// directories its targets live in (cargo refuses a package whose targets are missing).
+function suggestedInputs(tree, metadata, described) {
+  const inputs = new Set(['Cargo.toml']);
+  if (fs.existsSync(path.join(tree, 'Cargo.lock'))) inputs.add('Cargo.lock');
+  for (const row of described.rows) {
+    if (row.dir !== '.') {
+      inputs.add(row.dir);
+      continue;
+    }
+    if (fs.existsSync(path.join(tree, 'build.rs'))) inputs.add('build.rs');
+    for (const target of row.item.targets) {
+      const relative = relativeTo(tree, target.src_path);
+      if (!relative.startsWith('..')) inputs.add(relative.split('/')[0]);
+    }
+  }
+  for (const dir of described.unlisted) inputs.add(dir);
+  const covered = [...inputs].filter((input) => ![...inputs].some((other) => other !== input && input.startsWith(`${other}/`)));
+  return covered.sort();
+}
+
+// Symbolic links under the proposed inputs, in three classes. A copy holds regular files only. A
+// link the build certainly reads (blocking) is refused whatever the owner says: the owner replaces
+// it by its content or leaves its crate out. Any other link is refused unless the owner lists it in
+// extraction.unreadLinks (listed, with the owner's reason); the others are proposed, each with its
+// target and a reason the owner can adopt, and the owner decides. A proposal says whether the crate
+// that holds the link has a build script, which could read it. The first few blocking links are
+// reported; the owner decides on every proposed one, so none is cut.
+const LINK_REPORT_LIMIT = 10;
+function linksUnder(tree, inputs, unread = new Map(), rows = []) {
+  const blocking = [];
+  const listed = [];
+  const proposed = [];
+  const owner = (relative) => rows.filter((row) => row.dir === '.' || relative.startsWith(`${row.dir}/`)).sort((a, b) => b.dir.length - a.dir.length)[0];
+  const visit = (relative, declared = false) => {
+    const stat = fs.lstatSync(path.join(tree, relative), { throwIfNoEntry: false });
+    if (!stat) return;
+    if (stat.isSymbolicLink()) {
+      const target = fs.readlinkSync(path.join(tree, relative));
+      if (isRustInputLink(relative, declared)) blocking.push(relative);
+      else if (unread.has(relative)) listed.push({ path: relative, target, reason: unread.get(relative) });
+      else {
+        const holder = owner(relative);
+        const buildScript = holder ? holder.item.targets.some((item) => item.kind.includes('custom-build')) : null;
+        proposed.push({ path: relative, target, buildScript, reason: `symbolic link to ${target}, which is not a manifest, lock, build script, toolchain or cargo configuration file, Rust source file or file under src; the owner confirms that the build does not read it${buildScript === true ? ' (its crate has a build script, which could read it)' : ''}` });
+      }
+    } else if (stat.isDirectory()) for (const name of fs.readdirSync(path.join(tree, relative)).sort()) visit(`${relative}/${name}`);
+  };
+  inputs.forEach((input) => visit(input, true));
+  const stale = [...unread.keys()].filter((entry) => !listed.some((link) => link.path === entry)).sort();
+  return { blocking: blocking.slice(0, LINK_REPORT_LIMIT), blockingCount: blocking.length, listed, proposed, stale };
+}
+
+function listCrates(flags) {
+  if ((flags.out === undefined) === (flags['project-root'] === undefined)) refuse('usage', 'crates needs exactly one of --out (a prepared copy) and --project-root (a checkout)');
+  const prepared = flags.out !== undefined ? preparedManifest(path.resolve(flags.out)).manifest : null;
+  const projectRoot = prepared ? prepared.projectRoot : (fs.existsSync(flags['project-root']) ? fs.realpathSync(flags['project-root']) : refuse('usage', `--project-root ${flags['project-root']} does not exist`));
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
+  const tree = fs.realpathSync(prepared ? prepared.tree : projectRoot);
+  const view = workspaceView(tree, env, prepared ? 'the extraction copy' : 'the checkout');
+  const { described, metadata, roster } = view;
+  // The roster is the whole in-repo closure, not only the workspace members: a path dependency
+  // that is not a member is an in-repo crate the owner can choose as a target, and a crate a
+  // member depends on has to come before it in the order.
+  const result = {
+    message: `${roster.crates.length} in-repo package(s), ${roster.order.length} with a library`,
+    tree,
+    workspaceRoot: relativeTo(tree, metadata.workspace_root),
+    crates: roster.crates,
+    order: roster.order,
+    // The scope prepare records for this checkout, so a recorded source commit can be classified
+    // without preparing a copy: a checkout is read by cargo here exactly as prepare reads it with
+    // the release, and a copy shows the scope its manifest recorded.
+    scope: prepared ? recordedScope(prepared) : cargoScope({ original: { crates: view.crates } }),
+    unlisted: view.unlisted,
+    ...(view.outside.length > 0 ? { outside: view.outside.map(({ package: name, manifest }) => ({ package: name, manifest })) } : {}),
+  };
+  if (!prepared) {
+    const inputs = suggestedInputs(tree, metadata, { ...described, unlisted: view.unlisted });
+    // A copy holds regular files only. A link the build certainly reads is named in links and has to
+    // be replaced or its crate left out. Every other link is refused unless the owner lists it in
+    // extraction.unreadLinks (unreadLinks, with the owner's reason); the rest are proposed with a
+    // reason (proposedUnreadLinks), and the owner decides on the whole list at once.
+    const links = linksUnder(tree, inputs, unreadLinks(readConfig(projectRoot)), view.rows);
+    return { ...result, inputs, links: links.blocking, linkCount: links.blockingCount, unreadLinks: links.listed, proposedUnreadLinks: links.proposed, staleUnreadLinks: links.stale };
+  }
+  // The checkout's own view, for what the patches changed. A checkout cargo cannot read
+  // leaves the comparison out, with the reason.
+  let original;
+  try {
+    original = workspaceView(projectRoot, env, 'the checkout');
+  } catch (error) {
+    return { ...result, compared: { available: false, reason: error.message } };
+  }
+  const key = (row) => row.package;
+  const here = new Map(view.rows.map((row) => [key(row), row]));
+  const dependencyKey = (row, dependency, base) => `${row.package}|${dependency.name}|${relativeTo(base, realOrSelf(dependency.path))}`;
+  const kept = new Set(view.rows.flatMap((row) => pathDependencies(row.item).map((dependency) => dependencyKey(row, dependency, tree))));
+  const pathDependenciesRemoved = original.rows.filter((row) => here.has(key(row)))
+    .flatMap((row) => pathDependencies(row.item).filter((dependency) => !kept.has(dependencyKey(row, dependency, projectRoot)))
+      .map((dependency) => ({ package: row.package, dependency: dependency.name, dir: relativeTo(projectRoot, realOrSelf(dependency.path)) })));
+  return {
+    ...result,
+    compared: {
+      available: true,
+      packagesNotInCopy: original.rows.filter((row) => !here.has(key(row))).map((row) => ({ package: row.package, dir: row.dir })),
+      // A path dependency the patched manifests no longer have: a patch that turns an in-repo
+      // crate into a registry one hides it from extraction, so it is named, never silent.
+      pathDependenciesRemoved,
+    },
+  };
+}
+
+// trim-workspace: the patches that cut a workspace down to the crates the owner chose.
+//
+// It prints and writes nothing in the project. The manifests are edited as text, by a reader
+// that knows tables, keys, strings and values that span lines, because the edit has to be a
+// plain unified diff like any translation patch; a manifest it cannot read that way is refused,
+// never guessed at. cargo then reads the trimmed result (--no-deps, offline) and the patches
+// are applied to a clean copy of the originals, so what is printed is what the owner will get.
+const TOML_TOKEN = /"(?:[^"\\]|\\.)*"|'[^']*'|#.*/g;
+
+// The strings of one line, in order, up to a comment.
+function stringsOf(line) {
+  const found = [];
+  for (const token of line.match(TOML_TOKEN) ?? []) {
+    if (token.startsWith('#')) break;
+    found.push(token.slice(1, -1));
+  }
+  return found;
+}
+
+// Tracks the bracket depth and an open multi-line string across the lines of one value.
+function scanValue(line, state) {
+  let index = 0;
+  while (index < line.length) {
+    if (state.multi !== null) {
+      const close = line.indexOf(state.multi, index);
+      if (close < 0) return;
+      index = close + 3;
+      state.multi = null;
+      continue;
+    }
+    const char = line[index];
+    if (char === '#') return;
+    if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+      state.multi = line.slice(index, index + 3);
+      index += 3;
+    } else if (char === '"') {
+      index += 1;
+      while (index < line.length && line[index] !== '"') index += line[index] === '\\' ? 2 : 1;
+      index += 1;
+    } else if (char === "'") {
+      const close = line.indexOf("'", index + 1);
+      index = close < 0 ? line.length : close + 1;
+    } else {
+      if (char === '[' || char === '{') state.depth += 1;
+      else if (char === ']' || char === '}') state.depth -= 1;
+      index += 1;
+    }
+  }
+}
+
+// The dotted key at the start of a line or in a table header: ['target', 'cfg(unix)', 'dependencies'].
+function keyParts(text) {
+  const parts = [];
+  let index = 0;
+  const skip = () => { while (text[index] === ' ' || text[index] === '\t') index += 1; };
+  for (;;) {
+    skip();
+    let part;
+    if (text[index] === '"') {
+      let close = index + 1;
+      while (close < text.length && text[close] !== '"') close += text[close] === '\\' ? 2 : 1;
+      if (close >= text.length) return null;
+      part = text.slice(index + 1, close);
+      index = close + 1;
+    } else if (text[index] === "'") {
+      const close = text.indexOf("'", index + 1);
+      if (close < 0) return null;
+      part = text.slice(index + 1, close);
+      index = close + 1;
+    } else {
+      const bare = /^[A-Za-z0-9_-]+/.exec(text.slice(index));
+      if (!bare) return null;
+      part = bare[0];
+      index += part.length;
+    }
+    parts.push(part);
+    skip();
+    if (index >= text.length) return parts;
+    if (text[index] !== '.') return null;
+    index += 1;
+  }
+}
+
+// The position of the `=` that ends a key, outside quotes; -1 when the line has none.
+function equalsIndex(line) {
+  let index = 0;
+  while (index < line.length) {
+    const char = line[index];
+    if (char === '"') {
+      index += 1;
+      while (index < line.length && line[index] !== '"') index += line[index] === '\\' ? 2 : 1;
+    } else if (char === "'") {
+      const close = line.indexOf("'", index + 1);
+      if (close < 0) return -1;
+      index = close;
+    } else if (char === '=') {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+
+// Tables with the line range each occupies (the comment lines directly above a header belong
+// to it) and the keys inside them with theirs. Lines are zero-based and inclusive.
+function tomlLayout(text, where) {
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  const unreadable = (index, why) => refuse('attempt-refused', `${where}, line ${index + 1}: ${why}; the trim edits only a manifest it can read line by line`);
+  const state = { depth: 0, multi: null };
+  const tables = [];
+  let entry = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (state.depth !== 0 || state.multi !== null) {
+      scanValue(line, state);
+      if (state.depth < 0) unreadable(index, 'a closing bracket that opens nothing');
+      entry.end = index;
+      continue;
+    }
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      const header = /^(\[\[?)\s*(.+?)\s*\]\]?\s*(?:#.*)?$/.exec(trimmed);
+      const parts = header ? keyParts(header[2]) : null;
+      if (parts === null) unreadable(index, 'a table header it cannot read');
+      let from = index;
+      while (from > 0 && lines[from - 1].trim().startsWith('#')) from -= 1;
+      if (tables.length > 0) tables[tables.length - 1].to = from - 1;
+      tables.push({ header: parts, array: header[1] === '[[', from, to: lines.length - 1, entries: [] });
+      continue;
+    }
+    const equals = equalsIndex(line);
+    const key = equals < 0 ? null : keyParts(line.slice(0, equals));
+    if (key === null) unreadable(index, 'a line that is neither a table header nor a key');
+    if (tables.length === 0) unreadable(index, 'a key before the first table');
+    entry = { key, start: index, end: index, equals };
+    tables[tables.length - 1].entries.push(entry);
+    scanValue(line.slice(equals + 1), state);
+    if (state.depth < 0) unreadable(index, 'a closing bracket that opens nothing');
+  }
+  if (state.depth !== 0 || state.multi !== null) unreadable(lines.length - 1, 'a value that does not end');
+  return { lines, tables };
+}
+
+// Removes the line ranges (inclusive) and puts replacement lines in their place.
+function applyLineEdits(layout, edits) {
+  const lines = [...layout.lines];
+  const last = layout.lines.length - 1;
+  for (const edit of [...edits].sort((a, b) => b.from - a.from)) lines.splice(edit.from, edit.to - edit.from + 1, ...(edit.replacement ?? []));
+  // Cutting the first or last table must not leave a blank line at that end of the file.
+  if (edits.some((edit) => edit.from === 0)) while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  if (edits.some((edit) => edit.to === last)) while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  return `${lines.join('\n')}\n`;
+}
+
+// Tables a root manifest keeps when its package goes, and the ones that belong to the package.
+const KEPT_ROOT_TABLES = new Set(['workspace', 'profile', 'patch', 'replace']);
+const PACKAGE_TABLES = new Set(['package', 'lib', 'bin', 'example', 'test', 'bench', 'features', 'dependencies', 'dev-dependencies', 'build-dependencies', 'target', 'lints', 'badges']);
+
+// The root manifest cut down to the kept directories: the members list loses every entry that is
+// not kept and, when the root package is not kept, the package's own tables go (the workspace
+// stays virtual). Nothing else is touched.
+function trimRootManifest(text, keptDirs, dropRootPackage) {
+  const layout = tomlLayout(text, 'Cargo.toml');
+  const edits = [];
+  let workspace = null;
+  for (const table of layout.tables) {
+    const top = table.header[0];
+    if (top === 'workspace' && table.header.length === 1) workspace = table;
+    if (KEPT_ROOT_TABLES.has(top)) continue;
+    if (!PACKAGE_TABLES.has(top)) refuse('attempt-refused', `Cargo.toml has a [${table.header.join('.')}] table the trim does not know; it edits only manifests whose tables it can classify`);
+    if (dropRootPackage) edits.push({ from: table.from, to: table.to });
+  }
+  if (workspace === null) refuse('attempt-refused', 'Cargo.toml has no [workspace] table, so there is no member list to trim');
+  const key = (name) => workspace.entries.find((item) => item.key.length === 1 && item.key[0] === name);
+  if (key('default-members')) refuse('attempt-refused', 'the workspace has default-members, which the trim does not rewrite; remove it in a patch first');
+  const members = key('members');
+  if (!members) refuse('attempt-refused', 'the workspace table has no members list (path dependencies make members implicitly), so there is nothing to trim');
+  const block = layout.lines.slice(members.start, members.end + 1);
+  const inner = [block[0].slice(members.equals + 1), ...block.slice(1)];
+  const listed = inner.map(stringsOf);
+  const clean = (member) => member.replace(/^\.\//, '').replace(/\/+$/, '');
+  const names = listed.flat();
+  const glob = names.find((member) => /[*?[\]{}]/.test(member));
+  if (glob !== undefined) refuse('attempt-refused', `the members list has a pattern (${JSON.stringify(glob)}); list the members one by one before trimming`);
+  const keep = (member) => keptDirs.has(clean(member));
+  const oneEach = listed[0].length === 0 && listed[listed.length - 1].length === 0 && listed.every((row) => row.length <= 1);
+  if (oneEach) {
+    listed.forEach((row, offset) => {
+      if (row.length === 1 && !keep(row[0])) edits.push({ from: members.start + offset, to: members.start + offset });
+    });
+  } else {
+    if (inner.some((line) => line.replace(TOML_TOKEN, (token) => (token.startsWith('#') ? token : '""')).includes('#'))) {
+      refuse('attempt-refused', 'the members list is written across lines with comments in a form the trim does not rewrite; put one member on each line first');
+    }
+    edits.push({ from: members.start, to: members.end, replacement: ['members = [', ...names.filter(keep).map((member) => `    ${JSON.stringify(member)},`), ']'] });
+  }
+  return { text: applyLineEdits(layout, edits), kept: names.filter(keep), removed: names.filter((member) => !keep(member)) };
+}
+
+// A kept crate's manifest without the path dev-dependencies named: the entries of its
+// [dev-dependencies] and [target.*.dev-dependencies] tables, or a [dev-dependencies.NAME] table.
+function dropDevDependencyEntries(text, names, where) {
+  const layout = tomlLayout(text, where);
+  const edits = [];
+  const found = new Set();
+  for (const table of layout.tables) {
+    const at = table.header.indexOf('dev-dependencies');
+    if (at < 0 || !(at === 0 || (table.header[0] === 'target' && at === 2))) continue;
+    if (table.header.length === at + 1) {
+      for (const item of table.entries) {
+        if (names.has(item.key[0])) {
+          edits.push({ from: item.start, to: item.end });
+          found.add(item.key[0]);
+        }
+      }
+    } else if (table.header.length === at + 2 && names.has(table.header[at + 1])) {
+      edits.push({ from: table.from, to: table.to });
+      found.add(table.header[at + 1]);
+    }
+  }
+  const missing = [...names].filter((name) => !found.has(name));
+  if (missing.length > 0) refuse('attempt-refused', `${where}: cannot find the dev-dependency ${missing.join(', ')} in a form the trim edits; remove it in a translation patch of your own`);
+  return applyLineEdits(layout, edits);
+}
+
+function treeBytes(dir) {
+  let total = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (name === 'target' || name === '.git') continue;
+    const stat = fs.lstatSync(path.join(dir, name));
+    total += stat.isDirectory() ? treeBytes(path.join(dir, name)) : stat.size;
+  }
+  return total;
+}
+
+// A unified diff of one file, with a/ and b/ paths as the translation patches carry them.
+function unifiedDiff(relative, before, after, scratch) {
+  for (const side of ['a', 'b']) fs.mkdirSync(path.join(scratch, side, path.dirname(relative)), { recursive: true });
+  fs.writeFileSync(path.join(scratch, 'a', relative), before);
+  fs.writeFileSync(path.join(scratch, 'b', relative), after);
+  const run = spawnSync('git', ['-c', 'core.abbrev=12', 'diff', '--no-index', '--no-prefix', '--no-color', '--no-ext-diff', '--', `a/${relative}`, `b/${relative}`], {
+    cwd: scratch, encoding: 'utf8', env: gitEnv({ GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' }),
+  });
+  if (run.error || run.status !== 1) refuse('tool-failed', `cannot diff ${relative}${run.error ? `: ${run.error.message}` : ''}`);
+  return run.stdout;
+}
+
+const listOf = (names, limit = 6) => (names.length <= limit ? names.join(', ') : `${names.slice(0, limit).join(', ')} and ${names.length - limit} more`);
+
+function trimWorkspace(flags) {
+  const projectRoot = fs.existsSync(flags['project-root']) ? fs.realpathSync(flags['project-root']) : refuse('usage', `--project-root ${flags['project-root']} does not exist`);
+  const mode = flags['dev-dependencies'] ?? 'keep';
+  if (!['keep', 'drop'].includes(mode)) refuse('usage', '--dev-dependencies must be keep or drop');
+  const wanted = [...new Set(flags.keep.split(',').map((name) => name.trim()).filter((name) => name !== ''))];
+  if (wanted.length === 0) refuse('usage', '--keep needs at least one crate');
+  const env = cargoEnvironment(releaseTools(path.resolve(projectRoot, flags.release)));
+  const view = workspaceView(projectRoot, env, 'the checkout');
+  if (fs.realpathSync(view.metadata.workspace_root) !== projectRoot) refuse('attempt-refused', `the workspace root is ${view.metadata.workspace_root}, not the project root; the trim edits the manifest at the project root`);
+  const byDir = new Map(view.rows.map((row) => [row.abs, row]));
+  const selected = wanted.map((name) => {
+    const found = view.rows.find((row) => row.crate === name || row.package === name);
+    if (!found) refuse('invalid-input', `--keep names ${name}, which is not an in-repo crate of the workspace`);
+    if (!found.library) refuse('invalid-input', `--keep names ${name}, which has no library: only a crate with a library can be extracted`);
+    return found;
+  });
+
+  // The crates cargo needs a manifest of: the selected ones and every in-repo path dependency
+  // of them, to any depth. Dev-dependencies count unless they are dropped (then they are
+  // removed from the kept manifests instead).
+  const edges = (row, withDev) => row.item.dependencies.filter((dependency) => dependency.path && (withDev || dependency.kind !== 'dev')).map((dependency) => ({ dependency, target: realOrSelf(dependency.path) }));
+  const closure = (withDev) => {
+    const because = new Map(selected.map((row) => [row.abs, { reason: 'selected' }]));
+    const queue = [...selected];
+    while (queue.length > 0) {
+      const row = queue.shift();
+      for (const { dependency, target } of edges(row, withDev)) {
+        const next = byDir.get(target);
+        if (!next) refuse('attempt-refused', `${row.package} depends by path on ${dependency.name} at ${path.relative(projectRoot, target) || '.'}, which is outside the checkout or not a package; a copy cannot hold it`);
+        if (because.has(next.abs)) continue;
+        because.set(next.abs, { reason: `${dependency.kind === 'dev' ? 'dev-dependency' : 'path dependency'} of ${row.crate ?? row.package}` });
+        queue.push(next);
+      }
+    }
+    return because;
+  };
+  const normal = closure(false);
+  const full = closure(true);
+  const reached = mode === 'keep' ? full : normal;
+  const keptRows = view.rows.filter((row) => reached.has(row.abs));
+  const keptDirs = new Set(keptRows.map((row) => row.dir));
+  const devOnly = view.rows.filter((row) => full.has(row.abs) && !normal.has(row.abs))
+    .map((row) => ({ crate: row.crate ?? row.package, dir: row.dir, via: full.get(row.abs).reason, bytes: treeBytes(row.abs) }));
+
+  const rootRow = view.rows.find((row) => row.dir === '.');
+  const rootText = fs.readFileSync(path.join(projectRoot, 'Cargo.toml'), 'utf8');
+  const dropRootPackage = rootRow !== undefined && !keptDirs.has('.');
+  const trimmed = trimRootManifest(rootText, keptDirs, dropRootPackage);
+  const rewrites = new Map([['Cargo.toml', { before: rootText, after: trimmed.text }]]);
+  const devDropped = [];
+  if (mode === 'drop') {
+    for (const row of keptRows) {
+      const names = new Set(edges(row, true).filter(({ dependency, target }) => dependency.kind === 'dev' && !reached.has(target)).map(({ dependency }) => dependency.rename ?? dependency.name));
+      if (names.size === 0) continue;
+      const relative = row.dir === '.' ? 'Cargo.toml' : `${row.dir}/Cargo.toml`;
+      const before = fs.readFileSync(path.join(projectRoot, relative), 'utf8');
+      rewrites.set(relative, { before, after: dropDevDependencyEntries(before, names, relative) });
+      devDropped.push({ crate: row.crate ?? row.package, file: relative, dependencies: [...names].sort() });
+    }
+  }
+
+  const inputs = suggestedInputs(projectRoot, view.metadata, { rows: keptRows, unlisted: [] });
+  // A link the build certainly reads blocks the selection. Every other link under the kept crates
+  // is reported as `crates` reports it: listed in extraction.unreadLinks, proposed for the owner to
+  // list (generated C headers, say), or listed but no longer a link under these inputs (stale).
+  const linkReport = linksUnder(projectRoot, inputs, unreadLinks(readConfig(projectRoot)), keptRows);
+  const links = linkReport.blocking;
+  if (links.length > 0) {
+    const holder = (link) => keptRows.find((row) => row.dir === '.' ? !link.includes('/') : link === row.dir || link.startsWith(`${row.dir}/`));
+    refuse('attempt-refused', `a symbolic link lies inside the crates this selection needs (${links.slice(0, 3).join(', ')}${links.length > 3 ? ', ...' : ''}), and a copy holds regular files only; choose crates that do not need the directory, or replace the link in a translation patch of its own`, {
+      links,
+      holders: [...new Set(links.map((link) => holder(link)?.crate ?? holder(link)?.package).filter(Boolean))],
+      kept: keptRows.map((row) => ({ crate: row.crate ?? row.package, dir: row.dir, because: reached.get(row.abs).reason })),
+    });
+  }
+
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-trim-'));
+  try {
+    // cargo reads the trimmed workspace: a copy of exactly the inputs, with the new manifests.
+    const trial = path.join(scratch, 'trial');
+    fs.mkdirSync(trial);
+    for (const input of inputs) fs.cpSync(path.join(projectRoot, input), path.join(trial, input), { recursive: true, filter: (source) => !['target', '.git'].includes(path.basename(source)) });
+    for (const [relative, { after }] of rewrites) fs.writeFileSync(path.join(trial, relative), after);
+    const checked = workspaceView(fs.realpathSync(trial), env, 'the trimmed workspace');
+    const here = new Set(checked.rows.map((row) => row.package));
+    const expected = new Set(keptRows.map((row) => row.package));
+    const unexpected = [...here].filter((name) => !expected.has(name));
+    const absent = [...expected].filter((name) => !here.has(name));
+    if (unexpected.length > 0 || absent.length > 0) refuse('attempt-refused', `cargo reads the trimmed workspace with a different set of crates (extra: ${unexpected.join(', ') || 'none'}; missing: ${absent.join(', ') || 'none'})`);
+    const trialDirs = new Set(checked.rows.map((row) => row.abs));
+    for (const row of checked.rows) {
+      const open = row.item.dependencies.filter((dependency) => dependency.path && !trialDirs.has(realOrSelf(dependency.path)));
+      if (open.length > 0) refuse('attempt-refused', `after the trim, ${row.package} still depends by path on ${open.map((dependency) => dependency.name).join(', ')}, which the copy would not hold`);
+    }
+
+    const bodies = [];
+    for (const [relative, { before, after }] of rewrites) {
+      if (before === after) continue;
+      bodies.push({ relative, diff: unifiedDiff(relative, before, after, path.join(scratch, 'diff')) });
+    }
+    const rootBody = bodies.find((item) => item.relative === 'Cargo.toml');
+    const leftOut = view.rows.filter((row) => !reached.has(row.abs));
+    const patches = [];
+    if (rootBody) {
+      const header = [
+        `Supporting patch: trim the workspace manifest to ${listOf(selected.map((row) => row.crate))} and the crates they need`,
+        `Change: Cargo.toml: members lists the ${trimmed.kept.length} kept member(s) and drops ${trimmed.removed.length}${dropRootPackage ? `; the root package ${rootRow.package} and its tables are removed, so the workspace is virtual` : ''}.`,
+        `Why: the extraction copy holds only the listed inputs, and cargo needs the manifest of every workspace member in it; ${leftOut.length} in-repo package(s), among them ${listOf(leftOut.map((row) => row.crate ?? row.package), 4)}, are left out.`,
+        'Behaviour: no Rust source changes; the kept crates are built from the same sources, and a crate that is no longer in the workspace cannot add features to them.',
+        'Classification: A-mechanical',
+        `Assumptions: the kept crates are all that cargo needs to read for ${listOf(selected.map((row) => row.crate))}; every library crate left out is named in dropped (or nonTargets) of the extraction spec with the owner's decision.`,
+        'Obligations: none',
+        'Independent: yes',
+      ].join('\n');
+      patches.push({ name: 'trim-workspace-manifest.patch', touches: ['Cargo.toml'], text: `${header}\n\n${rootBody.diff}` });
+    }
+    for (const dropped of devDropped) {
+      const body = bodies.find((item) => item.relative === dropped.file);
+      const header = [
+        `Supporting patch: ${dropped.crate} drops its path dev-dependencies on crates left out of the copy`,
+        `Change: ${dropped.file}: remove the dev-dependencies ${dropped.dependencies.join(', ')}.`,
+        'Why: cargo must load the manifest of every path dependency, even for a build that does not compile tests, and these crates are not in the copy.',
+        'Behaviour: no effect on the normal build or on any Rust source; only test-only dependency edges are removed.',
+        'Classification: A-mechanical',
+        'Assumptions: none',
+        'Obligations: none',
+        'Independent: yes',
+      ].join('\n');
+      patches.push({ name: `trim-${dropped.file.replace(/\/Cargo\.toml$/, '').replace(/^Cargo\.toml$/, 'root').replace(/[^A-Za-z0-9]+/g, '-')}-dev-dependencies.patch`, touches: [dropped.file], text: `${header}\n\n${body.diff}` });
+    }
+
+    // What is printed is what applies: each patch goes onto a clean copy of the originals.
+    const clean = path.join(scratch, 'clean');
+    for (const [relative, { before }] of rewrites) {
+      fs.mkdirSync(path.dirname(path.join(clean, relative)), { recursive: true });
+      fs.writeFileSync(path.join(clean, relative), before);
+    }
+    for (const patch of patches) {
+      const applied = gitApply(clean, { bytes: Buffer.from(patch.text) });
+      if (applied.status !== 0) refuse('tool-failed', `the generated patch ${patch.name} does not apply to the checkout: ${first(`${applied.stderr}`.split('\n')).join(' | ')}`);
+    }
+    for (const [relative, { after }] of rewrites) {
+      if (fs.readFileSync(path.join(clean, relative), 'utf8') !== after) refuse('tool-failed', `the generated patches do not produce the trimmed ${relative}`);
+    }
+
+    return {
+      message: `keep ${keptRows.length} of ${view.rows.length} in-repo package(s) for ${listOf(selected.map((row) => row.crate))}; ${leftOut.length} left out; ${patches.length} patch(es) printed, nothing written`,
+      workspaceRoot: '.',
+      devDependencies: mode,
+      selected: selected.map((row) => row.crate),
+      kept: keptRows.map((row) => ({ package: row.package, crate: row.crate, dir: row.dir, because: reached.get(row.abs).reason })),
+      dropped: leftOut.filter((row) => row.library).map((row) => ({ package: row.package, crate: row.crate, dir: row.dir })),
+      devOnly,
+      members: { kept: trimmed.kept, removed: trimmed.removed },
+      rootPackageRemoved: dropRootPackage ? rootRow.package : null,
+      inputs,
+      unreadLinks: linkReport.listed,
+      proposedUnreadLinks: linkReport.proposed,
+      staleUnreadLinks: linkReport.stale,
+      config: { extraction: { inputs } },
+      patches: patches.map((patch) => ({ name: patch.name, touches: patch.touches, sha256: sha256(Buffer.from(patch.text)), text: patch.text })),
+    };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+// A multi-crate attempt: every crate gets an ordinary attempt of its own in
+// OUT/units/<crate> (so a failing crate ends only its own chain), all bound to
+// the same prepared manifest, and OUT/attempt.json lists them with their hashes.
+// Everything is checked before anything is written.
+function attemptUnits(out, manifest, manifestSha256, spec) {
+  const { units, main, order, nonTargets } = multiUnits(spec, manifest);
+  const targets = units.map(({ crate, dir }) => ({ crate, dir }));
+  const dropped = checkDropped(spec.dropped);
+  const unaccounted = coverageProblems(manifest, { targets, nonTargets, dropped, multi: true });
+  if (unaccounted.length > 0) refuse('attempt-refused', `the workspace is not accounted for: ${unaccounted.join('; ')}`, { reasons: unaccounted });
+  const homes = homesOf(process.env);
+  const unitOut = (unit) => path.join(out, UNITS_DIR, unit.crate);
+  for (const unit of units) deriveInvocation(unitOut(unit), manifest, unit.flat, homes, targets, nonTargets);
+  const roster = rosterOf({ main, order, units: units.map((unit) => ({ crate: unit.crate, package: unit.package, dir: unit.dir, stitch: (unit.flat.stitch ?? []).map((entry) => entry.crate) })), nonTargets, dropped });
+  const recorded = units.map((unit) => {
+    fs.mkdirSync(unitOut(unit), { recursive: true });
+    return { unit, record: recordAttempt(unitOut(unit), manifest, manifestSha256, unit.flat, targets, nonTargets, roster).attempt };
+  });
+  const record = {
+    schema: MULTI_SCHEMA,
+    version: 1,
+    out,
+    manifestSha256,
+    scope: recordedScope(manifest),
+    main,
+    order,
+    roster,
+    rosterSha256: rosterSha256(roster),
+    ...(dropped.length > 0 ? { dropped } : {}),
+    units: recorded.map(({ unit, record: attempt }) => ({
+      crate: unit.crate,
+      package: unit.package,
+      dir: unit.dir,
+      imports: (attempt.spec.stitch ?? []).map((entry) => entry.crate),
+      out: unitOut(unit),
+      attemptSha256: sha256(fs.readFileSync(path.join(unitOut(unit), ATTEMPT))),
+      supported: attempt.supported,
+    })),
+  };
+  fs.writeFileSync(path.join(out, ATTEMPT), `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
+  const unsupported = record.units.filter((unit) => !unit.supported).map((unit) => unit.crate);
+  return {
+    message: `attempt recorded for ${units.length} crate(s) (${unsupported.length === 0 ? 'supported configuration' : `unsupported: ${unsupported.join(', ')}`})`,
+    attempt: record,
+  };
+}
+
+// The multi-crate record of a copy, re-read against the manifest and every
+// crate's own attempt record; null when the copy holds a single-crate attempt.
+function readMulti(out) {
+  const file = path.join(out, ATTEMPT);
+  if (!fs.existsSync(file)) return null;
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(file));
+  } catch {
+    refuse('attempt-refused', `${file} is not readable JSON`);
+  }
+  if (record?.schema !== MULTI_SCHEMA) return null;
+  const bad = (message) => refuse('attempt-refused', `${file}: ${message}`);
+  if (record.version !== 1 || record.out !== out || !Array.isArray(record.units) || record.units.length === 0) bad('not this copy\'s multi-crate attempt record');
+  const { manifest, manifestSha256 } = preparedManifest(out);
+  if (record.manifestSha256 !== manifestSha256) bad('the manifest changed after the attempt was recorded');
+  if (record.scope !== undefined && !sameState(record.scope, recordedScope(manifest))) bad('the scope recorded in the attempt differs from the scope in the manifest');
+  for (const unit of record.units) {
+    if (typeof unit?.crate !== 'string' || !CRATE_NAME.test(unit.crate) || unit.out !== path.join(out, UNITS_DIR, unit.crate)) bad('a unit record does not name a crate directory of this copy');
+    const unitFile = path.join(unit.out, ATTEMPT);
+    if (!lexists(unitFile) || sha256(fs.readFileSync(unitFile)) !== unit.attemptSha256) bad(`the attempt record of crate ${unit.crate} changed after it was recorded`);
+  }
+  if (!record.units.some((unit) => unit.crate === record.main)) bad('main is not one of the units');
+  checkRoster(out, record, bad);
+  return record;
+}
+
+// The roster is the attempt's own account of who belongs to it, and it is kept in every unit's
+// attempt record, not only in the top-level file. A row deleted from the top-level record, a
+// changed main, a different order or a unit directory that is not in the roster leaves the roster
+// the units remember different from the one rebuilt here, and the attempt is refused.
+function checkRoster(out, record, bad) {
+  const same = (first, second) => JSON.stringify(first) === JSON.stringify(second);
+  const { roster } = record;
+  if (!isObject(roster) || record.rosterSha256 !== rosterSha256(roster) || !Array.isArray(roster.units)) bad('it carries no roster, or the roster does not match its hash; record the attempt again');
+  if (!same(roster, rosterOf({ main: roster.main, order: roster.order, units: roster.units, nonTargets: roster.nonTargets, dropped: roster.dropped }))) bad('the roster is not in its canonical form');
+  const crates = record.units.map((unit) => unit.crate);
+  if (new Set(crates).size !== crates.length) bad('a crate has more than one unit');
+  const unitRecords = new Map(record.units.map((unit) => [unit.crate, JSON.parse(fs.readFileSync(path.join(unit.out, ATTEMPT), 'utf8'))]));
+  for (const [crate, unitRecord] of unitRecords) {
+    if (!same(unitRecord.roster, roster) || unitRecord.rosterSha256 !== record.rosterSha256) bad(`the attempt record of crate ${crate} does not carry this attempt's roster`);
+  }
+  if (!same([...crates].sort(), roster.units.map((unit) => unit.crate).sort())) bad(`the units (${crates.join(', ')}) are not the crates of the roster (${roster.units.map((unit) => unit.crate).join(', ')})`);
+  const directories = fs.readdirSync(path.join(out, UNITS_DIR)).sort();
+  if (!same(directories, [...crates].sort())) bad(`the directories under ${UNITS_DIR} (${directories.join(', ')}) are not the crates of the roster`);
+  const byCrate = (a, b) => (a.crate < b.crate ? -1 : a.crate > b.crate ? 1 : 0);
+  const derived = record.units.map((unit) => {
+    const spec = unitRecords.get(unit.crate).spec;
+    const at = Array.isArray(spec?.cargoArgs) ? spec.cargoArgs.indexOf('--package') : -1;
+    return { crate: unit.crate, rowPackage: unit.package, package: at >= 0 ? spec.cargoArgs[at + 1] : null, dir: unit.dir, stitch: (Array.isArray(spec?.stitch) ? spec.stitch : []).map((entry) => entry?.crate), imports: unit.imports };
+  });
+  for (const entry of derived) {
+    const expected = roster.units.find((candidate) => candidate.crate === entry.crate);
+    const unitRecord = unitRecords.get(entry.crate);
+    if (unitRecord.spec?.crate !== entry.crate || entry.package !== expected.package || entry.rowPackage !== expected.package || entry.dir !== expected.dir || !same([...entry.stitch].sort(), expected.stitch) || !same([...(entry.imports ?? [])].sort(), expected.stitch)) {
+      bad(`the row of crate ${entry.crate} (package ${entry.rowPackage}, directory ${entry.dir}, imports ${(entry.imports ?? []).join(', ') || 'none'}) is not what the roster says (package ${expected.package}, directory ${expected.dir}, stitched to ${expected.stitch.join(', ') || 'nothing'})`);
+    }
+    if (!same([...(unitRecord.targets ?? [])].sort(byCrate), roster.units.map(({ crate, dir }) => ({ crate, dir })).sort(byCrate)) || !same([...(unitRecord.nonTargets ?? [])].sort(byCrate), roster.nonTargets)) {
+      bad(`the declared crates in the attempt record of crate ${entry.crate} are not the roster's`);
+    }
+  }
+  if (record.main !== roster.main) bad(`main is ${record.main}, the roster says ${roster.main}`);
+  if (!same((record.dropped ?? []).map(({ crate, reason }) => ({ crate, reason })).sort(byCrate), roster.dropped)) bad('the dropped crates are not the roster\'s');
+  let order;
+  try {
+    order = stitchOrder(record.units.map((unit) => ({ crate: unit.crate, dir: unit.dir, flat: unitRecords.get(unit.crate).spec })));
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    bad(`the stitching order cannot be derived again: ${error.message}`);
+  }
+  if (!same(order, roster.order) || !same(record.order, roster.order)) bad(`the order ${(record.order ?? []).join(', ')} is not the order derived from the units' stitching (${order.join(', ')})`);
+}
+
+function recordAttempt(out, manifest, manifestSha256, spec, targets = [], nonTargets = [], roster = null) {
+  const invocation = deriveInvocation(out, manifest, spec, homesOf(process.env), targets, nonTargets);
   const residuals = callerResiduals(process.env, invocation.env.RUSTUP_TOOLCHAIN);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
   for (const file of cargoConfig.filter((entry) => entry.present)) residuals.push({ name: file.path, class: 'cargo-config' });
@@ -959,6 +2296,8 @@ function attempt(flags) {
     version: 2,
     out,
     manifestSha256,
+    scope: recordedScope(manifest),
+    ...(roster === null ? {} : { roster, rosterSha256: rosterSha256(roster) }),
     ...invocation,
     identity,
     cargoConfig,
@@ -997,7 +2336,8 @@ function loadChain(out, through) {
   }
   const { manifest, manifestSha256 } = preparedManifest(out);
   if (record.manifestSha256 !== manifestSha256) refuse('attempt-refused', 'the manifest changed after the attempt was recorded');
-  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}));
+  if (record.roster !== undefined && (!isObject(record.roster) || rosterSha256(record.roster) !== record.rosterSha256)) refuse('attempt-refused', `${attemptFile}: its roster does not match its roster hash`);
+  const invocation = deriveInvocation(out, manifest, record.spec, homesOf(record.env ?? {}), Array.isArray(record.targets) ? record.targets : [], Array.isArray(record.nonTargets) ? record.nonTargets : []);
   const differing = INVOCATION_FIELDS.filter((field) => !sameState(invocation[field], record[field]));
   if (differing.length > 0) refuse('attempt-refused', `the recorded ${differing.join(', ')} differ from what the attempt would execute (or a tool changed since it was recorded)`);
   const cargoConfig = cargoConfigFiles(manifest.tree, invocation.env.CARGO_HOME);
@@ -1063,36 +2403,379 @@ function exactlyFiles(entries, files) {
     && Object.entries(entries).every(([entry, state]) => state?.sha256 !== undefined || (state?.type === 'directory' && dirs.has(entry)));
 }
 
-// Structural problems in Charon's LLBC that the identity record relies on.
-function llbcProblems(file, invocation, sources) {
+// The declared crate whose directory is the longest prefix of a file of the copy.
+function ownerOf(crates, file) {
+  let best = null;
+  for (const candidate of crates) {
+    const holds = candidate.dir === '.' || file === candidate.dir || file.startsWith(`${candidate.dir}/`);
+    if (holds && (best === null || (candidate.dir !== '.' && (best.dir === '.' || candidate.dir.length > best.dir.length)))) best = candidate;
+  }
+  return best;
+}
+
+// The crates an LLBC reaches, from the first segment of every item's path.
+function reachedCrates(translated) {
+  const names = new Set();
+  for (const kind of LLBC_ITEM_KINDS) {
+    for (const decl of Array.isArray(translated?.[kind]) ? translated[kind] : []) {
+      const first = Array.isArray(decl?.item_meta?.name) ? decl.item_meta.name[0]?.Ident?.[0] : undefined;
+      if (typeof first === 'string') names.add(first);
+    }
+  }
+  return names;
+}
+
+// The crates the toolchain provides. Charon labels a file with the crate it belongs to, and a source
+// of the standard library need not lie in the directory named for that crate (core's vendored
+// stdarch sits under library/stdarch).
+const TOOLCHAIN_CRATES = new Set(['core', 'alloc', 'std', 'proc_macro', 'test']);
+
+// The packages of a Cargo.lock by the `<name>-<version>` directory cargo unpacks a package into.
+function lockPackages(text) {
+  const byDirectory = new Map();
+  for (const block of text.split(/^\[\[package\]\]\s*$/m).slice(1)) {
+    const name = /^name = "([^"]+)"/m.exec(block)?.[1];
+    const version = /^version = "([^"]+)"/m.exec(block)?.[1];
+    const source = /^source = "([^"]+)"/m.exec(block)?.[1] ?? null;
+    const checksum = /^checksum = "([0-9a-f]{64})"/m.exec(block)?.[1] ?? null;
+    if (name && version) byDirectory.set(`${name}-${version}`, { name, version, source, checksum });
+  }
+  return byDirectory;
+}
+
+// BEGIN CRATE ARCHIVE READER
+// A .crate is a gzip-compressed tar. This reader indexes it without unpacking anything, and it fails
+// closed: a header whose checksum is wrong, a type of entry it does not know, an entry path given twice,
+// a size that runs past the end, bytes after the end marker or an archive that is too large is an error,
+// never an entry that is skipped.
+const CRATE_ARCHIVE_LIMIT = 1 << 30;
+
+function tarOctal(block, from, to) {
+  if ((block[from] & 0x80) !== 0) {
+    // Base-256 numbers (GNU) carry sizes that do not fit the octal field.
+    let value = 0;
+    for (let at = from + 1; at < to; at += 1) value = value * 256 + block[at];
+    return value;
+  }
+  const text = block.toString('latin1', from, to).replace(/\0.*$/s, '').trim();
+  if (!/^[0-7]*$/.test(text)) throw new Error(`a number field is not octal (${JSON.stringify(text)})`);
+  return text === '' ? 0 : parseInt(text, 8);
+}
+
+function tarString(block, from, to) {
+  const end = block.indexOf(0, from);
+  return block.toString('utf8', from, end === -1 || end > to ? to : end);
+}
+
+function paxRecords(data) {
+  const records = {};
+  let at = 0;
+  while (at < data.length) {
+    const space = data.indexOf(0x20, at);
+    const length = Number(data.toString('latin1', at, space));
+    if (space === -1 || !Number.isInteger(length) || length < space - at + 3 || at + length > data.length || data[at + length - 1] !== 0x0a) throw new Error('a pax header record is malformed');
+    const record = data.toString('utf8', space + 1, at + length - 1);
+    const equals = record.indexOf('=');
+    if (equals < 1) throw new Error('a pax header record has no key');
+    records[record.slice(0, equals)] = record.slice(equals + 1);
+    at += length;
+  }
+  return records;
+}
+
+// The entries of a .crate by path: { kind: 'file' | 'directory', data } (the bytes of a regular file),
+// or { kind: 'other' } for a link, device or any other entry that is not a plain file.
+function crateEntries(archive) {
+  let tar;
+  try {
+    tar = zlib.gunzipSync(archive, { maxOutputLength: CRATE_ARCHIVE_LIMIT });
+  } catch (error) {
+    throw new Error(`it is not a readable gzip archive (${error.message})`);
+  }
+  const entries = new Map();
+  let at = 0;
+  let longName = null;
+  let pax = {};
+  while (at + 512 <= tar.length) {
+    const start = at;
+    const block = tar.subarray(at, at + 512);
+    if (block.every((byte) => byte === 0)) {
+      if (tar.subarray(start).some((byte) => byte !== 0)) throw new Error('bytes follow the end of the archive');
+      return entries;
+    }
+    let sum = 0;
+    for (let index = 0; index < 512; index += 1) sum += index >= 148 && index < 156 ? 0x20 : block[index];
+    if (tarOctal(block, 148, 156) !== sum) throw new Error(`the header at byte ${start} has a wrong checksum`);
+    const flag = String.fromCharCode(block[156] === 0 ? 0x30 : block[156]);
+    const size = pax.size === undefined ? tarOctal(block, 124, 136) : Number(pax.size);
+    if (!Number.isSafeInteger(size) || size < 0 || start + 512 + size > tar.length) throw new Error(`the entry at byte ${start} runs past the end of the archive`);
+    const data = tar.subarray(start + 512, start + 512 + size);
+    at = start + 512 + Math.ceil(size / 512) * 512;
+    if (flag === 'L') {
+      longName = tarString(data, 0, data.length);
+      continue;
+    }
+    if (flag === 'x') {
+      pax = paxRecords(data);
+      continue;
+    }
+    if (!['0', '5', '1', '2', '3', '4', '6', '7'].includes(flag)) throw new Error(`the entry at byte ${start} has the type ${JSON.stringify(flag)}, which this reader does not know`);
+    const magic = block.toString('latin1', 257, 263);
+    const prefix = magic.startsWith('ustar') ? tarString(block, 345, 500) : '';
+    const own = tarString(block, 0, 100);
+    const name = pax.path ?? longName ?? (prefix === '' ? own : `${prefix}/${own}`);
+    longName = null;
+    pax = {};
+    const normal = path.posix.normalize(name).replace(/\/+$/, '');
+    if (normal === '' || normal === '.' || path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')) throw new Error(`an entry is named ${JSON.stringify(name)}, which is not a path inside the package`);
+    if (entries.has(normal)) throw new Error(`the entry ${JSON.stringify(normal)} appears twice`);
+    entries.set(normal, flag === '0' ? { kind: 'file', data } : flag === '5' ? { kind: 'directory' } : { kind: 'other' });
+  }
+  throw new Error('the archive has no end marker');
+}
+// END CRATE ARCHIVE READER
+
+
+// What the LLBC read for a registry package, tied to the archive whose checksum the Cargo.lock
+// records. The unpacked file has to be a plain file whose real path is exactly its place in cargo's
+// unpacked copy of that package (no link at any component), has to be an entry of the archive, and
+// has to hold the archive entry's bytes; contents the LLBC carries have to be those bytes too. A
+// changed, missing, redirected or non-archive file is a problem, whatever the checksum says.
+function registrySourceProblems(entry, kind, entries) {
+  const where = entry.name.Local;
+  const normal = path.posix.normalize(where);
+  const label = JSON.stringify(entry.crate_name);
+  const archiveName = `${kind.directory}.crate`;
+  const relative = normal.slice(`${kind.home}/registry/src/${kind.index}/${kind.directory}/`.length);
+  const expected = path.join(realOrSelf(kind.home), 'registry', 'src', kind.index, kind.directory, ...relative.split('/'));
+  let stat;
+  let real;
+  try {
+    stat = fs.lstatSync(where, { throwIfNoEntry: false });
+    if (stat?.isFile()) real = fs.realpathSync(where);
+  } catch (error) {
+    return [`the registry file ${where} (crate ${label}) cannot be examined (${error.code ?? error.message}), so it cannot be compared with ${archiveName}`];
+  }
+  if (!stat) return [`the registry file ${where} (crate ${label}) is missing from cargo's unpacked ${kind.directory}, so it cannot be compared with ${archiveName}`];
+  if (stat.isSymbolicLink()) return [`the registry file ${where} (crate ${label}) is a symbolic link; the source the LLBC read has to be a plain file of the unpacked ${kind.directory}`];
+  if (!stat.isFile()) return [`the registry file ${where} (crate ${label}) is not a regular file`];
+  if (real !== expected) return [`the registry file ${where} (crate ${label}) resolves to ${real}, not to its place ${expected} in the unpacked ${kind.directory}`];
+  const member = `${kind.directory}/${relative}`;
+  const found = entries.get(member);
+  if (found === undefined) return [`the registry file ${where} (crate ${label}) is not a file of ${archiveName}, whose checksum the lock records: the archive holds no ${member}`];
+  if (found.kind !== 'file') return [`${member} is not a regular file in ${archiveName}`];
+  const problems = [];
+  let bytes;
+  try {
+    bytes = fs.readFileSync(where);
+  } catch (error) {
+    return [`the registry file ${where} (crate ${label}) cannot be read (${error.code ?? error.message}), so it cannot be compared with ${archiveName}`];
+  }
+  if (!found.data.equals(bytes)) {
+    const collides = [...entries.keys()].some((name) => name !== member && name.toLowerCase() === member.toLowerCase());
+    problems.push(`the registry file ${where} (crate ${label}) differs from ${member} in ${archiveName}, whose checksum the lock records${collides ? '; the archive holds another entry whose name differs only in case, and a case-insensitive filesystem keeps one of the two' : ''}`);
+  }
+  if (entry.contents !== null && entry.contents !== undefined && (typeof entry.contents !== 'string' || !found.data.equals(Buffer.from(entry.contents, 'utf8')))) {
+    problems.push(`the LLBC's contents of ${where} (crate ${label}) are not the bytes of ${member} in ${archiveName}`);
+  }
+  return problems;
+}
+
+// What one file of the LLBC is, from the path Charon wrote (the forms of real Charon 0.1.315 output):
+// a path relative to the copy (or absolute, under it) is a file of the copy; /rustc/library/... is
+// the toolchain; <cargo home>/registry/src/<index>/<name>-<version>/... is a registry package, but
+// only under the cargo home the tools were run with (CARGO_HOME of the invocation), never a path
+// that merely ends like one. Any other form (a Virtual or NotReal name, a path elsewhere, a git
+// checkout, a build-script output) has not been checked against real output and is named in a refusal.
+function llbcPathClass(name, treeRoots, cargoHomes = []) {
+  const keys = isObject(name) ? Object.keys(name) : [];
+  if (keys.length !== 1 || keys[0] !== 'Local' || typeof name.Local !== 'string' || name.Local === '') {
+    return { form: 'unsurveyed', shown: keys.length === 1 ? `a ${keys[0]} name` : JSON.stringify(name) };
+  }
+  const normal = path.posix.normalize(name.Local);
+  if (!path.posix.isAbsolute(normal)) {
+    return normal === '..' || normal.startsWith('../') ? { form: 'outside', shown: name.Local } : { form: 'tree', relative: normal };
+  }
+  for (const root of treeRoots) if (normal.startsWith(`${root}/`)) return { form: 'tree', relative: normal.slice(root.length + 1) };
+  if (/^\/rustc\/(?:[0-9a-f]{40}\/)?library\//.test(normal)) return { form: 'toolchain' };
+  for (const home of cargoHomes) {
+    const registry = normal.startsWith(`${home}/registry/src/`) ? /^([^/]+)\/([^/]+)\/.+$/.exec(normal.slice(`${home}/registry/src/`.length)) : null;
+    if (registry) return { form: 'registry', home, index: registry[1], directory: registry[2] };
+  }
+  return { form: 'outside', shown: name.Local };
+}
+
+const LLBC_ITEM_KINDS = ['fun_decls', 'type_decls', 'global_decls', 'trait_decls', 'trait_impls'];
+const MAX_ERROR_ITEMS = 200;
+
+// Charon can exit 0 and still flag items it could not translate: the LLBC's own
+// has_errors flag, and has_errors on each item. The names are recorded, never dropped.
+function llbcErrorItems(llbc, translated) {
+  const items = [];
+  for (const kind of LLBC_ITEM_KINDS) {
+    for (const decl of Array.isArray(translated?.[kind]) ? translated[kind] : []) {
+      if (decl?.item_meta?.has_errors !== true) continue;
+      const name = Array.isArray(decl.item_meta.name) ? decl.item_meta.name.map((part) => (Array.isArray(part?.Ident) ? part.Ident[0] : '{impl}')).join('::') : '?';
+      items.push(`${kind.replace(/_decls$|s$/, '')} ${name}`);
+    }
+  }
+  return { hasErrors: llbc?.has_errors === true || items.length > 0, items: items.slice(0, MAX_ERROR_ITEMS), itemCount: items.length };
+}
+
+// Structural problems in Charon's LLBC that the identity record relies on, and
+// what the record keeps about it. For one crate every source of the copy must be
+// labelled with that crate and carry its exact contents. With declared crates
+// (targets), Charon nulls the contents of every crate that is not the main one, so
+// a source under another declared crate may carry no contents, but it must be
+// labelled with its owner; its bytes are pinned by the recorded tree (verify-tree
+// ran before and after Charon) and checked exactly by that crate's own attempt.
+// A source under no declared crate, or labelled with another crate, is refused.
+function inspectLlbc(file, invocation, sources) {
   let llbc;
   try {
     llbc = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (error) {
-    return [`the LLBC is not readable JSON: ${error.message}`];
+    return { problems: [`the LLBC is not readable JSON: ${error.message}`], info: null };
   }
   const translated = llbc?.translated;
   const problems = [];
   if (typeof llbc?.charon_version !== 'string') problems.push('the LLBC records no charon_version');
   if (translated?.options?.dest_file !== invocation.llbc) problems.push('the LLBC names another output path');
+  if (translated?.crate_name !== invocation.crate) problems.push(`the LLBC is for crate ${JSON.stringify(translated?.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
   const files = Array.isArray(translated?.files) ? translated.files : null;
   const decls = Array.isArray(translated?.fun_decls) ? translated.fun_decls.filter((decl) => decl !== null) : null;
-  if (!files || !decls) return [...problems, 'the LLBC has no files or fun_decls list'];
+  if (!files || !decls) return { problems: [...problems, 'the LLBC has no files or fun_decls list'], info: null };
   const ids = files.map((entry) => entry?.id);
   if (ids.some((id) => !Number.isInteger(id)) || new Set(ids).size !== ids.length) problems.push('the LLBC file ids are not unique integers');
   const defIds = decls.map((decl) => decl?.def_id);
   if (defIds.some((id) => !Number.isInteger(id)) || new Set(defIds).size !== defIds.length) problems.push('the LLBC fun_decls def_ids are not unique integers');
-  if (files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
+  const targets = invocation.targets ?? [];
+  const nonTargets = invocation.nonTargets ?? [];
+  const declared = [...targets.map((entry) => ({ ...entry, kind: 'target' })), ...nonTargets.map((entry) => ({ ...entry, kind: 'non-target' }))];
+  const foreign = [];
+  const nonTargetSources = [];
+  if (targets.length === 0 && files.some((entry) => entry?.crate_name === invocation.crate && typeof entry?.name?.Local === 'string' && typeof entry.contents !== 'string')) {
     problems.push('a local source file in the LLBC has no contents');
   }
-  // Every entry naming a source of the prepared copy must carry its exact contents and the crate label.
+  const exact = (entry, name) => typeof entry.contents === 'string' && sha256(entry.contents) === sources[name]?.sha256;
+  const treeRoots = [...new Set([invocation.tree, realOrSelf(invocation.tree)].filter((root) => typeof root === 'string'))];
+  const lock = lockPackages(fs.existsSync(path.join(invocation.tree, LOCK_FILE)) ? fs.readFileSync(path.join(invocation.tree, LOCK_FILE), 'utf8') : '');
+  const externals = new Map();
+  const cargoHomes = [...new Set([invocation.env?.CARGO_HOME, realOrSelf(invocation.env?.CARGO_HOME ?? '')].filter((home) => typeof home === 'string' && home !== '' && path.isAbsolute(home)))];
+  const archives = new Map();
+  // A crate label has exactly one identity: the toolchain, or one package of the Cargo.lock with its
+  // checksum. A second, different one is refused.
+  const bind = (crate, identity, where) => {
+    const known = externals.get(crate);
+    if (known === undefined) externals.set(crate, identity);
+    else if (JSON.stringify(known) !== JSON.stringify(identity)) problems.push(`the LLBC gives crate ${JSON.stringify(crate)} two identities (${JSON.stringify(known)} and ${JSON.stringify(identity)}; the second at ${where})`);
+  };
+  const declaredLabels = new Set([invocation.crate, ...declared.map((entry) => entry.crate)]);
+  // Every file of the LLBC lands in exactly one class or the stage fails: a file of the prepared copy,
+  // the toolchain, or a package of the Cargo.lock. Nothing is skipped for lying outside the copy.
   for (const entry of files) {
-    const name = entry?.name?.Local;
-    if (typeof name !== 'string' || !Object.hasOwn(sources, name)) continue;
-    if (entry.crate_name !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
-    if (typeof entry.contents !== 'string' || sha256(entry.contents) !== sources[name]?.sha256) problems.push(`the LLBC's ${name} is not the prepared source`);
+    const label = JSON.stringify(entry?.crate_name);
+    const kind = llbcPathClass(entry?.name, treeRoots, cargoHomes);
+    if (kind.form === 'toolchain') {
+      if (!TOOLCHAIN_CRATES.has(entry.crate_name)) problems.push(`the LLBC reads a toolchain source file ${entry.name.Local} but labels it with crate ${label}, which is not a crate of the toolchain`);
+      else bind(entry.crate_name, { origin: 'toolchain' }, entry.name.Local);
+      continue;
+    }
+    if (kind.form === 'registry') {
+      // A registry package is bound by the Cargo.lock: it lists the package with a registry source and
+      // the checksum of its archive, and the archive that cargo kept in this run's cache has exactly
+      // that checksum. Every file the LLBC read from the package is then compared with the archive:
+      // a plain file in its place in cargo's unpacked copy, holding the bytes of the archive's entry.
+      // The label may be neither a declared crate (whose sources are files of the copy) nor a crate
+      // of the toolchain, whatever the path looks like.
+      const locked = lock.get(kind.directory);
+      const archive = path.join(kind.home, 'registry', 'cache', kind.index, `${kind.directory}.crate`);
+      if (typeof entry.crate_name !== 'string' || declaredLabels.has(entry.crate_name) || TOOLCHAIN_CRATES.has(entry.crate_name)) {
+        problems.push(`the LLBC labels the registry source ${entry.name.Local} with crate ${label}, which is a declared crate or a crate of the toolchain; a registry package cannot be either`);
+      } else if (!locked || typeof locked.source !== 'string' || !locked.source.startsWith('registry+')) {
+        problems.push(`the LLBC reads ${entry.name.Local} (crate ${label}), but ${kind.directory} is not a registry package of the ${LOCK_FILE} in the copy`);
+      } else if (locked.checksum === null) {
+        problems.push(`the ${LOCK_FILE} in the copy records no checksum for ${kind.directory}, so the source the LLBC reads (${entry.name.Local}, crate ${label}) cannot be bound to the package`);
+      } else if (!fs.existsSync(archive)) {
+        problems.push(`the cargo cache holds no archive ${archive}, so the checksum of ${kind.directory} in the ${LOCK_FILE} cannot be checked against the package the LLBC reads (${entry.name.Local}, crate ${label}); fetch it with the same CARGO_HOME`);
+      } else {
+        if (!archives.has(archive)) {
+          const bytes = fs.readFileSync(archive);
+          const hash = sha256(bytes);
+          let entries = null;
+          let unreadable = null;
+          if (hash === locked.checksum) {
+            try {
+              entries = crateEntries(bytes);
+            } catch (error) {
+              unreadable = error.message;
+            }
+          }
+          archives.set(archive, { hash, entries, unreadable, reported: false });
+        }
+        const loaded = archives.get(archive);
+        if (loaded.entries === null) {
+          if (!loaded.reported) {
+            loaded.reported = true;
+            problems.push(loaded.hash !== locked.checksum
+              ? `the archive ${kind.directory}.crate in the cargo cache hashes to ${loaded.hash}, not the ${locked.checksum} that the ${LOCK_FILE} records for it`
+              : `the archive ${kind.directory}.crate in the cargo cache has the checksum the ${LOCK_FILE} records, but it cannot be read as a package: ${loaded.unreadable}`);
+          }
+        } else {
+          const found = registrySourceProblems(entry, kind, loaded.entries);
+          problems.push(...found);
+          if (found.length === 0) bind(entry.crate_name, { origin: 'registry', package: locked.name, version: locked.version, checksum: locked.checksum }, entry.name.Local);
+        }
+      }
+      continue;
+    }
+    if (kind.form === 'outside') {
+      problems.push(`the LLBC reads ${kind.shown} (crate ${label}), which lies outside the extraction copy and is neither the toolchain nor a registry package: another tree, or a file Charon found by an absolute path`);
+      continue;
+    }
+    if (kind.form === 'unsurveyed') {
+      problems.push(`the LLBC names a source file as ${kind.shown} (crate ${label}); this form has not been checked against real Charon output, so the file cannot be pinned`);
+      continue;
+    }
+    const name = kind.relative;
+    if (!Object.hasOwn(sources, name)) {
+      problems.push(`the LLBC reads ${name} (crate ${label}), which is not a file of the prepared copy: an input missing from extraction.inputs, or a file made by a build`);
+      continue;
+    }
+    if (targets.length === 0) {
+      if (entry.crate_name !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, not ${JSON.stringify(invocation.crate)}`);
+      if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+      continue;
+    }
+    const holder = ownerOf(declared, name);
+    const owner = holder?.crate ?? null;
+    if (entry.crate_name === invocation.crate) {
+      if (owner !== invocation.crate) problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(invocation.crate)}, but the file lies under ${owner === null ? 'no declared crate' : `crate ${JSON.stringify(owner)}`}`);
+      else if (!exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+    } else if (owner !== null && entry.crate_name === owner) {
+      if (entry.contents !== null && entry.contents !== undefined && !exact(entry, name)) problems.push(`the LLBC's ${name} is not the prepared source`);
+      else (holder.kind === 'target' ? foreign : nonTargetSources).push({ crate: owner, file: name, sha256: sources[name].sha256 });
+    } else {
+      problems.push(`the LLBC labels ${name} with crate ${JSON.stringify(entry.crate_name)}, but the file lies under ${owner === null ? 'no declared crate, so it is an in-repo crate nobody declared as a target or as a non-target' : `declared crate ${JSON.stringify(owner)}`}`);
+    }
   }
-  return problems;
+  const byFile = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+  // A crate that is not declared is external only when the toolchain or a package of the Cargo.lock
+  // stands behind it through a source file the LLBC reads: a crate the LLBC reaches that has none
+  // is refused, never filed as external. A name in the Cargo.lock is not enough: the library name
+  // Charon writes can differ from the package name by more than hyphens, a lock entry may be a path
+  // or git package, and a name alone does not say that a registry package is the one that was built.
+  const foreignCrates = [...reachedCrates(translated)].filter((crate) => crate !== invocation.crate).sort().map((crate) => {
+    if (targets.some((entry) => entry.crate === crate)) return { crate, kind: 'target' };
+    if (nonTargets.some((entry) => entry.crate === crate)) return { crate, kind: 'non-target' };
+    const known = externals.get(crate) ?? (TOOLCHAIN_CRATES.has(crate) ? { origin: 'toolchain' } : null);
+    if (known === null) {
+      problems.push(`the LLBC reaches crate ${crate}, which is not a declared crate or the toolchain and has no source file of a registry package of the ${LOCK_FILE} in the copy; nothing establishes where it comes from`);
+      return { crate, kind: 'external', origin: 'unknown' };
+    }
+    return { crate, kind: 'external', ...known };
+  });
+  return { problems, info: { crate: translated.crate_name, ...llbcErrorItems(llbc, translated), foreignSources: foreign.sort(byFile), nonTargetSources: nonTargetSources.sort(byFile), foreignCrates } };
 }
 
 function beginStage(chain, stage) {
@@ -1129,6 +2812,17 @@ function toolReasons(name, run) {
   ].filter(Boolean);
 }
 
+// The first few lines of a tool's log that state an error, each cut short: what a person
+// needs to classify a failed build (a lock cargo cannot satisfy, a missing manifest, a
+// compile error) without opening the log. The full log stays on disk and is hashed.
+const LOG_ERROR_LINES = 5;
+const LOG_LINE_LENGTH = 200;
+function logErrors(log) {
+  const lines = fs.readFileSync(log, 'utf8').split('\n').map((line) => line.trim()).filter((line) => /^error(\[[A-Za-z0-9]+\])?:/.test(line));
+  const shown = lines.slice(0, LOG_ERROR_LINES).map((line) => (line.length > LOG_LINE_LENGTH ? `${line.slice(0, LOG_LINE_LENGTH)}...` : line));
+  return lines.length > shown.length ? [...shown, `(${lines.length - shown.length} more error line(s) in the log)`] : shown;
+}
+
 function stageBase(chain, stage) {
   return { stage, prevSha256: chain.prevSha256, manifestSha256: chain.manifestSha256 };
 }
@@ -1137,20 +2831,27 @@ function runCharon(chain) {
   const inv = chain.invocation;
   const { out } = chain.attempt;
   if (lexists(inv.llbc)) refuse('attempt-refused', `${inv.llbc} already exists; the LLBC must be produced by this attempt`);
-  verifyTree({ out });
+  const copy = copyRoot(out);
+  verifyTree({ out: copy });
   const files = beginStage(chain, 'charon');
   const log = path.join(out, 'charon.log');
   const run = runTool(inv.tools.charon.path, inv.charon.argv, inv.charon.cwd, inv.env, log);
   const reasons = toolReasons('Charon', run);
+  if (reasons.length > 0) reasons.push(...logErrors(log).map((line) => `Charon's log: ${line}`));
   try {
-    verifyTree({ out });
+    verifyTree({ out: copy });
   } catch (error) {
     reasons.push(`verify-tree after Charon: ${error.message}`);
   }
   const llbc = fileState(inv.llbc);
+  let info = null;
   if (!llbc?.sha256) reasons.push(`Charon produced no LLBC file at ${inv.llbc}`);
-  else if (reasons.length === 0) reasons.push(...llbcProblems(inv.llbc, inv, chain.manifest.final.files));
-  return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null }, reasons);
+  else if (reasons.length === 0) {
+    const checked = inspectLlbc(inv.llbc, inv, chain.manifest.final.files);
+    reasons.push(...checked.problems);
+    info = checked.info;
+  }
+  return settle(files, { ...stageBase(chain, 'charon'), run, logSha256: fileState(log).sha256, llbcSha256: llbc?.sha256 ?? null, llbc: info }, reasons);
 }
 
 // The Lean files translation.json names. Every local function must name one, and
@@ -1216,7 +2917,7 @@ function runAeneas(chain) {
 // directories that hold them, and the ownership record; this attempt must
 // produce every owned file again. Publication never deletes or overwrites
 // anything else.
-function publicationPlan(inv, outputs) {
+function publicationPlan(inv, outputs, sources = {}) {
   const { publishDir, projectRoot } = inv;
   refuseLinkedDirectory(projectRoot, path.relative(projectRoot, publishDir));
   const stat = fs.lstatSync(publishDir, { throwIfNoEntry: false });
@@ -1259,14 +2960,615 @@ function publicationPlan(inv, outputs) {
     if (folded.has(key) && folded.get(key) !== entry) reject(`${entry} and ${folded.get(key)} differ only in case`, { reason: 'case-collision' });
     folded.set(key, entry);
   }
-  return produced.map((file) => ({ attemptPath: path.join(inv.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
+  return produced.map((file) => ({ attemptPath: sources[file] ?? path.join(inv.aeneasDest, file), projectPath: path.join(publishDir, file), sha256: outputs[file] }));
+}
+
+// ---- Edits to the generated Lean ------------------------------------------------------
+//
+// Two declared, recorded edits turn the Aeneas output into the published Lean: the exact
+// text substitutions of the spec, then stitching to the crates whose real translation
+// replaces this crate's axioms. Both are a pure function of the Aeneas outputs and the
+// spec, so attempt-status computes them again and compares with what publication wrote.
+//
+// Stitching. When crate B calls crate A and A is a target, Aeneas still writes B's
+// foreign items of A as axioms that carry only a type. Each such axiom becomes an alias
+// of A's real definition, with the type B's code was translated against, and B's Lean
+// imports A's module:
+//
+//   axiom A.f : T            ==>   @[reducible] def A.f : T := _root_.A.f
+//
+// The alias keeps every existing name valid, and Lean itself is the signature gate: a
+// constant whose type is not T is rejected when the project builds. A foreign global is
+// typed `Result T` where the crate's own global is `T`, so a constant is lifted with
+// Result.ok, and is an ordinary (not reducible) definition so that proof automation
+// keeps seeing the constant. Nothing falls back to an axiom silently: an item the provider does not
+// define must be named in the spec's `assume` list, and is then recorded as assumed.
+
+const OPENERS = '({[⦃';
+const CLOSERS = ')}]⦄';
+const squash = (text) => text.replace(/\s+/g, ' ').trim();
+const countOf = (text, needle) => text.split(needle).length - 1;
+const isRustItem = (rustPath, prefix) => rustPath === prefix || rustPath.startsWith(`${prefix}::`);
+
+// A substitution renames a name Lean cannot read (see UNREADABLE_NAME_CHARS), which is not
+// a change of meaning: the old name is not valid Lean, every match is replaced, the new name
+// is plain and occurs nowhere in the crate's generated Lean (so it captures nothing and no
+// existing name is confused with it), and no match is a field or a qualified-name component
+// (a match after a `.`). A rename can still only be made inside a definition's body. Axiom
+// declarations (name, type, attributes, the doc comment that carries the Rust path), the
+// name and type of every definition and every other top-level line stay exactly as Aeneas
+// wrote them, so a literal edit cannot add, retype or relabel an assumption, or reword what
+// a definition claims. The generated file is cut into top-level blocks (a block starts at a
+// doc comment, an attribute or a declaration keyword in column 0); a definition or theorem
+// block is split at its first top-level `:=` into a head, which is fixed, and a body, which
+// is free; every other block is fixed whole.
+const BLOCK_START = /^(?:\/--|@\[|(?:noncomputable\s+)?(?:def|axiom|theorem|lemma|structure|inductive|abbrev|opaque|class|instance|namespace|end|open|set_option|section|attribute|import|public)\b)/;
+const KEYWORD_LINE = /^(?:noncomputable\s+)?(def|axiom|theorem|lemma|structure|inductive|abbrev|opaque|class|instance)\b/;
+const BODY_KEYWORDS = new Set(['def', 'theorem', 'lemma', 'abbrev', 'instance']);
+
+function leanBlocks(text) {
+  const blocks = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const keyword = KEYWORD_LINE.exec(line);
+    const starts = BLOCK_START.test(line) && (current === null || (/^\/--/.test(line) ? current.text !== '' && (current.keyword !== null || !current.doc) : current.keyword !== null || /^(?:namespace|end|open|set_option|section|attribute|import|public)\b/.test(line)));
+    if (current === null || starts) {
+      current = { text: '', keyword: null, doc: false };
+      blocks.push(current);
+    }
+    if (/^\/--/.test(line)) current.doc = true;
+    if (keyword && current.keyword === null) current.keyword = { word: keyword[1], offset: current.text.length };
+    current.text += `${current.text === '' ? '' : '\n'}${line}`;
+  }
+  return blocks.map((block) => {
+    const name = DECLARATION.exec(block.text.slice(block.keyword?.offset ?? 0))?.[2] ?? null;
+    const found = block.keyword && BODY_KEYWORDS.has(block.keyword.word)
+      ? topLevel(block.text.slice(block.keyword.offset), [':='])[0]
+      : undefined;
+    const end = found === undefined ? null : block.keyword.offset + found.index + 2;
+    return { text: block.text, name, axiom: block.keyword?.word === 'axiom', head: end === null ? null : block.text.slice(0, end), body: end === null ? null : block.text.slice(end) };
+  });
+}
+
+function declarationProblems(before, after) {
+  const was = leanBlocks(before);
+  const now = leanBlocks(after);
+  if (was.length !== now.length) return ['it changes the number of top-level declarations'];
+  for (let index = 0; index < was.length; index += 1) {
+    const [a, b] = [was[index], now[index]];
+    const free = a.head !== null && b.head !== null;
+    if (free ? a.head === b.head : a.text === b.text) continue;
+    if (a.axiom || b.axiom) return [`it changes the axiom ${a.name ?? b.name}, and a substitution never edits an axiom`];
+    return [free ? `it changes the name or type of ${a.name ?? b.name}, and a substitution edits only the body of a definition` : `it changes text outside a definition body (${JSON.stringify(a.text.split('\n')[0].slice(0, 60))})`];
+  }
+  return [];
+}
+
+// The parts of a Lean source text that are data or commentary, not code: string literals (plain,
+// raw r"…" and r#"…"#, and interpolated s!"…" without an expression), character literals and
+// comments (line, block with nesting, doc). A name in «…» is an identifier whatever it contains.
+// It fails closed: a string or comment that is not closed, an interpolated string that holds an
+// expression, or a quote that is neither part of a name (x', after an identifier character) nor a
+// character literal is an error, never a guess, so a rename is not made in text that was not read.
+const NAME_CHARACTER = /[\p{L}\p{N}_!?'₀-ₜᵢ-ᵪⁿ]/u;
+const CHARACTER_LITERAL = /^'(?:[^\\'\n]|\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.))'/su;
+
+function leanRegions(text) {
+  const regions = [];
+  const lineOf = (offset) => text.slice(0, offset).split('\n').length;
+  const unclosed = (what, from) => ({ error: `${what} starting at line ${lineOf(from)} is not closed` });
+  const afterName = (offset) => offset > 0 && NAME_CHARACTER.test(text[offset - 1]);
+  let at = 0;
+  while (at < text.length) {
+    const char = text[at];
+    const next = text[at + 1];
+    if (char === '-' && next === '-') {
+      const end = text.indexOf('\n', at);
+      regions.push({ start: at, end: end === -1 ? text.length : end, kind: 'comment' });
+      at = end === -1 ? text.length : end;
+    } else if (char === '/' && next === '-') {
+      let depth = 1;
+      let end = at + 2;
+      while (end < text.length && depth > 0) {
+        if (text[end] === '/' && text[end + 1] === '-') { depth += 1; end += 2; }
+        else if (text[end] === '-' && text[end + 1] === '/') { depth -= 1; end += 2; }
+        else end += 1;
+      }
+      if (depth > 0) return unclosed('a block comment', at);
+      regions.push({ start: at, end, kind: 'comment' });
+      at = end;
+    } else if (char === 'r' && (next === '"' || next === '#') && !afterName(at)) {
+      let hashes = 0;
+      let cursor = at + 1;
+      while (text[cursor] === '#') { hashes += 1; cursor += 1; }
+      if (text[cursor] !== '"') { at += 1; continue; }
+      const close = `"${'#'.repeat(hashes)}`;
+      const end = text.indexOf(close, cursor + 1);
+      if (end === -1) return unclosed('a raw string', at);
+      regions.push({ start: at, end: end + close.length, kind: 'string' });
+      at = end + close.length;
+    } else if (char === '"' || (/[sfm]/.test(char) && next === '!' && text[at + 2] === '"' && !afterName(at))) {
+      const start = at;
+      const interpolated = char !== '"';
+      at += interpolated ? 3 : 1;
+      let closed = false;
+      while (at < text.length) {
+        if (text[at] === '\\') at += 2;
+        else if (interpolated && text[at] === '{') return { error: `an interpolated string at line ${lineOf(start)} holds an expression` };
+        else if (text[at] === '"') { at += 1; closed = true; break; } else at += 1;
+      }
+      if (!closed) return unclosed('a string', start);
+      regions.push({ start, end: at, kind: 'string' });
+    } else if (char === "'") {
+      if (afterName(at)) { at += 1; continue; }
+      const literal = CHARACTER_LITERAL.exec(text.slice(at, at + 16));
+      if (!literal) return { error: `a quote at line ${lineOf(at)} is neither part of a name nor a character literal` };
+      regions.push({ start: at, end: at + literal[0].length, kind: 'character literal' });
+      at += literal[0].length;
+    } else if (char === '«') {
+      const end = text.indexOf('»', at);
+      if (end === -1) return unclosed('a quoted name', at);
+      at = end + 1;
+    } else at += 1;
+  }
+  return { regions };
+}
+
+// Why a rename of every FIND in TEXT is refused because a match is not code, or null.
+function renamedData(text, find) {
+  const lexed = leanRegions(text);
+  if (lexed.error) return `the Lean text cannot be read to tell code from strings and comments (${lexed.error}), and a substitution never edits text that was not read`;
+  for (let at = text.indexOf(find); at !== -1; at = text.indexOf(find, at + find.length)) {
+    const region = lexed.regions.find((candidate) => at < candidate.end && at + find.length > candidate.start);
+    if (region) return `a match of ${JSON.stringify(find)} at line ${text.slice(0, at).split('\n').length} lies in a ${region.kind}, and a substitution renames identifiers only, never the text of a string, a character literal or a comment`;
+  }
+  return null;
+}
+
+function applySubstitutions(file, text, substitutions, world = {}) {
+  const applied = [];
+  const reasons = [];
+  let current = text;
+  substitutions.forEach((entry, index) => {
+    if (entry.file !== file) return;
+    const found = countOf(current, entry.find);
+    if (found !== entry.count) {
+      reasons.push(`substitution ${index} expects ${entry.count} match(es) of ${JSON.stringify(entry.find)} in ${file} and finds ${found}`);
+      return;
+    }
+    const taken = [[file, current], ...Object.entries(world)].find(([, other]) => other.includes(entry.replace));
+    if (taken) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${JSON.stringify(entry.replace)} already occurs in ${taken[0]}, so the renamed name could capture an existing one`);
+      return;
+    }
+    if (current.split(entry.find).slice(0, -1).some((piece) => piece.endsWith('.'))) {
+      reasons.push(`substitution ${index} is refused in ${file}: a match of ${JSON.stringify(entry.find)} follows a '.', and a substitution never renames a field or a part of a qualified name`);
+      return;
+    }
+    const next = current.split(entry.find).join(entry.replace);
+    const problems = declarationProblems(current, next);
+    if (problems.length > 0) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${problems[0]}`);
+      return;
+    }
+    const data = renamedData(current, entry.find);
+    if (data !== null) {
+      reasons.push(`substitution ${index} is refused in ${file}: ${data}`);
+      return;
+    }
+    applied.push({ index, file, find: entry.find, replace: entry.replace, count: entry.count, reason: entry.reason, beforeSha256: sha256(current), afterSha256: sha256(next) });
+    current = next;
+  });
+  return { text: current, applied, reasons };
+}
+
+function topLevel(text, tokens) {
+  const found = [];
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (OPENERS.includes(char)) depth += 1;
+    else if (CLOSERS.includes(char)) depth -= 1;
+    else if (depth === 0) {
+      const token = tokens.find((candidate) => text.startsWith(candidate, index));
+      if (token) {
+        found.push({ index, token });
+        index += token.length - 1;
+      }
+    }
+  }
+  return found;
+}
+
+// The binder groups and the type after a declaration's name, up to a top-level `:=`.
+function readSignature(rest) {
+  let at = 0;
+  const skip = () => { while (at < rest.length && /\s/.test(rest[at])) at += 1; };
+  const binders = [];
+  skip();
+  while (at < rest.length && OPENERS.includes(rest[at])) {
+    const start = at;
+    let depth = 0;
+    for (; at < rest.length; at += 1) {
+      if (OPENERS.includes(rest[at])) depth += 1;
+      else if (CLOSERS.includes(rest[at])) {
+        depth -= 1;
+        if (depth === 0) { at += 1; break; }
+      }
+    }
+    if (depth !== 0) return null;
+    binders.push(rest.slice(start, at));
+    skip();
+  }
+  if (rest[at] !== ':' || rest[at + 1] === '=') return null;
+  const body = rest.slice(at + 1);
+  const stop = topLevel(body, [':=']).at(0)?.index ?? body.length;
+  return { binders, type: body.slice(0, stop).trim() };
+}
+
+// A declaration's signature as implicit binders, explicit domains and a result, with
+// every identifier that names a declaration of the file spelled in full. Null when the
+// shape is not one this check reads (a dependent type): Lean then decides at build time.
+function normalSignature(rest, qualify) {
+  const parsed = readSignature(rest);
+  if (parsed === null) return null;
+  const implicit = [];
+  const domains = [];
+  for (const group of parsed.binders) {
+    if (group[0] !== '(') { implicit.push(qualify(squash(group))); continue; }
+    const inner = /^\(\s*([^:]+?)\s*:\s*([\s\S]*)\)$/.exec(group);
+    if (inner === null) return null;
+    const others = `${parsed.type} ${parsed.binders.filter((other) => other !== group).join(' ')}`;
+    const names = inner[1].split(/\s+/);
+    if (names.some((name) => new RegExp(`(^|[^A-Za-z0-9_'.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_'.])`).test(others))) return null;
+    for (let count = 0; count < names.length; count += 1) domains.push(qualify(squash(inner[2])));
+  }
+  const cuts = topLevel(parsed.type, ['→', '->']);
+  const parts = [];
+  let from = 0;
+  for (const cut of cuts) { parts.push(parsed.type.slice(from, cut.index)); from = cut.index + cut.token.length; }
+  parts.push(parsed.type.slice(from));
+  if (parts.some((part) => /^\(\s*[^()]*:/.test(part.trim()) || /[∀Π]/.test(part))) return null;
+  return { implicit, domains: [...domains, ...parts.slice(0, -1).map((part) => qualify(squash(part)))], result: qualify(squash(parts.at(-1))) };
+}
+
+function balanced(text) {
+  let depth = 0;
+  for (const char of text) {
+    if (OPENERS.includes(char)) depth += 1;
+    else if (CLOSERS.includes(char)) depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+// Removes parentheses that wrap the whole text.
+function unwrap(text) {
+  let value = text.trim();
+  while (value.startsWith('(') && value.endsWith(')') && balanced(value.slice(1, -1))) value = value.slice(1, -1).trim();
+  return value;
+}
+
+// 'equal', 'differ' or 'undecided'. Only a decided difference refuses early; the Lean
+// build is the check for everything else, and the record says which one ran.
+function compareSignatures(consumer, provider, lift) {
+  if (consumer === null || provider === null) return 'undecided';
+  const result = lift ? unwrap(consumer.result.replace(/^Result\s+/, '')) : consumer.result;
+  const expected = lift ? unwrap(provider.result) : provider.result;
+  if (lift && !/^Result\s/.test(consumer.result)) return 'differ';
+  const same = JSON.stringify([consumer.implicit, consumer.domains, result]) === JSON.stringify([provider.implicit, provider.domains, expected]);
+  return same ? 'equal' : 'differ';
+}
+
+// A declaration name stops at a delimiter; explicit universe parameters (`name.{u}`) are not part of it.
+const DECLARATION = /^(?:noncomputable\s+)?(def|axiom|structure|inductive|abbrev|opaque|class)\s+([^\s:({[⦃]+?)(?:\.\{[^}]*\})?(?=[\s:({[⦃]|$)([\s\S]*)$/m;
+const DOC_PATH = /^\/-- (?:Trait declaration: |Trait implementation: )?\[(.*)\]/;
+const RUST_ATTRIBUTE = /\b(rust_fun|rust_const|rust_type)\s+"([^"]+)"/;
+
+// The declarations of a crate's Lean by their full name. A name declared twice is reported, never
+// overwritten: the inventory would otherwise bind to whichever copy came last.
+function leanDeclarations(texts, crate) {
+  const declarations = new Map();
+  const duplicates = new Set();
+  for (const text of texts) {
+    for (const block of text.split(/\n{2,}/)) {
+      if (!block.startsWith('/--')) continue;
+      const found = DECLARATION.exec(block);
+      if (found === null) continue;
+      const key = `${crate}.${found[2]}`;
+      if (declarations.has(key)) {
+        duplicates.add(found[2]);
+        continue;
+      }
+      declarations.set(key, { keyword: found[1], rustPath: DOC_PATH.exec(block)?.[1] ?? null, rest: found[3], blockSha256: sha256(block) });
+    }
+  }
+  return { declarations, duplicates: [...duplicates].sort() };
+}
+
+// The crate whose published Lean this crate imports. What counts is the provider's final
+// publication, with its substitutions and its own stitching applied: that is the module Lean
+// loads, so its inventory and hashes come from there and never from the raw Aeneas output. The
+// provider's whole chain must be completed and consistent first (every stage recorded, the
+// published files as recorded, the edits reproducing), which is why a crate is published after
+// the crates it stitches to.
+function loadProvider(chain, crate) {
+  const dir = path.join(copyRoot(chain.attempt.out), UNITS_DIR, crate);
+  const bad = (message) => refuse('attempt-refused', `stitching to crate ${crate}: ${message}`);
+  if (!lexists(path.join(dir, ATTEMPT))) bad('it has no attempt record in this copy');
+  for (const stage of ATTEMPT_STAGES) {
+    if (!lexists(stagePaths(dir, stage).completed)) bad(`its ${stage} stage is not completed; run that crate through publish first, because this crate imports what it published`);
+  }
+  let provider;
+  try {
+    provider = loadChain(dir, ATTEMPT_STAGES.length);
+    attemptStatusOfChain(provider, dir);
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    bad(`its attempt is not consistent (${error.message}), so what it published is not a binding translation`);
+  }
+  const record = provider.attempt;
+  const root = record.spec.moduleRoot;
+  if (root === undefined) bad('it names no moduleRoot');
+  const names = translationLeanFiles(path.join(record.aeneasDest, 'translation.json'));
+  const mapping = provider.stages.publish.record.mapping;
+  const texts = {};
+  for (const name of names) {
+    const entry = mapping.find((candidate) => candidate.projectPath === path.join(provider.invocation.publishDir, name));
+    if (!entry) bad(`its publication does not map ${name}`);
+    texts[name] = fs.readFileSync(entry.projectPath, 'utf8');
+  }
+  const inventory = leanDeclarations(Object.values(texts), crate);
+  if (inventory.duplicates.length > 0) bad(`its published Lean declares ${inventory.duplicates.slice(0, 6).join(', ')}${inventory.duplicates.length > 6 ? ', ...' : ''} more than once, so no declaration of it is a unique target`);
+  return {
+    crate,
+    stageSha256: provider.stages.publish.sha256,
+    modules: names.map((name) => `${root}.${name.replace(/\.lean$/, '').split('/').join('.')}`),
+    declarations: inventory.declarations,
+    rustPaths: new Set([...inventory.declarations.values()].map((item) => item.rustPath).filter((item) => item !== null)),
+  };
+}
+
+function stitchText(text, { crate, provider, assume, consumerNames }) {
+  const providerOwned = (rustPath) => rustPath.split('::')[0] === provider.crate;
+  const qualifierFor = (owner, names, skipPrefix) => (code) => code.replace(/[A-Za-z_][A-Za-z0-9_'.]*/g, (token) => (!(skipPrefix && token.startsWith(`${skipPrefix}.`)) && names.has(`${owner}.${token}`) ? `${owner}.${token}` : token));
+  const replaced = [];
+  const assumed = [];
+  const copies = [];
+  const problems = [];
+  const usedAssume = new Set();
+  const parts = text.split(/(\n{2,})/);
+  for (let index = 0; index < parts.length; index += 2) {
+    const block = parts[index];
+    if (!block.startsWith('/--')) continue;
+    const declaration = /^axiom\s+([^\s:({[⦃]+)([\s\S]*)$/m.exec(block);
+    const attribute = declaration ? RUST_ATTRIBUTE.exec(block.slice(0, declaration.index)) : null;
+    if (declaration === null || attribute === null) {
+      const doc = DOC_PATH.exec(block)?.[1];
+      const copy = DECLARATION.exec(block);
+      if (doc !== undefined && copy !== null && providerOwned(doc)) {
+        // This crate's Lean defines an item of the provider itself. Where the provider defines it
+        // too, two declarations stand for one Rust item and the provider's theorems concern the
+        // other one. Where it does not, the owner has to have said so: the item is under an assume
+        // prefix, an item the provider leaves out.
+        const defined = provider.declarations.get(copy[2]) ?? [...provider.declarations.values()].find((item) => item.rustPath === doc);
+        const covering = assume.filter((prefix) => isRustItem(doc, prefix));
+        covering.forEach((prefix) => usedAssume.add(prefix));
+        if (defined) problems.push(`${doc} (${copy[2]}) is also defined as a ${copy[1]} in this crate's Lean, and ${provider.crate} defines it too (${defined.keyword}): two declarations stand for one Rust item, and ${provider.crate}'s theorems concern the other one; translate it opaquely here so that stitching can replace it by ${provider.crate}'s, or leave ${provider.crate} a non-target`);
+        else if (covering.length === 0) problems.push(`${doc} (${copy[2]}) is an item of ${provider.crate} that this crate's Lean defines itself, and ${provider.crate} does not define it; name it in the stitch assume list (the owner's decision) or translate it in ${provider.crate}`);
+        else copies.push({ rustPath: doc, name: copy[2], keyword: copy[1], assume: covering[0] });
+      }
+      continue;
+    }
+    const [, kindWord, rustPath] = attribute;
+    if (!providerOwned(rustPath)) continue;
+    const name = declaration[1];
+    const kind = { rust_fun: 'fun', rust_const: 'const', rust_type: 'type' }[kindWord];
+    const covering = assume.filter((prefix) => isRustItem(rustPath, prefix));
+    const target = provider.declarations.get(name);
+    if (covering.length > 0) {
+      covering.forEach((prefix) => usedAssume.add(prefix));
+      // The provider declares the item under this name or under any other that carries its Rust path.
+      const declared = target ?? [...provider.declarations.values()].find((item) => item.rustPath === rustPath);
+      if (declared) {
+        problems.push(`${rustPath} (${name}) is named in the assume list, but ${provider.crate} declares it (${declared.keyword}); it is stitched, and the assume list only names items the provider does not declare`);
+        continue;
+      }
+      assumed.push({ rustPath, name, qualifiedName: `${crate}.${name}`, reason: 'named in the stitch assume list' });
+      continue;
+    }
+    if (!target || (target.rustPath !== null && target.rustPath !== rustPath)) {
+      problems.push(target ? `${name} is ${rustPath} here and ${target.rustPath} in ${provider.crate}` : `${rustPath} (${name}) is not defined by ${provider.crate}; stitching never keeps an axiom silently, so name it in the stitch assume list or translate it in ${provider.crate}`);
+      continue;
+    }
+    const lift = kind === 'const' && !/^Result\b/.test(squash(readSignature(target.rest)?.type ?? ''));
+    const verdict = compareSignatures(
+      normalSignature(declaration[2], qualifierFor(crate, consumerNames, provider.crate)),
+      normalSignature(target.rest, qualifierFor(provider.crate, provider.declarations, null)),
+      lift,
+    );
+    if (verdict === 'differ') {
+      problems.push(`${rustPath}: the type of ${name} here (${squash(declaration[2])}) is not the type ${provider.crate} defines (${squash(target.rest.split(':=')[0])}), so it cannot stand for it`);
+      continue;
+    }
+    const head = block.slice(0, declaration.index);
+    // A constant stays an ordinary definition: a reducible `Result.ok c` would let proof
+    // automation read the bound value away, and the proofs written against the axiom name
+    // that value.
+    const marked = kind === 'const' ? head : /^@\[/m.test(head) ? head.replace(/^@\[/m, '@[reducible, ') : `${head}@[reducible]\n`;
+    parts[index] = `${marked}def ${name}${declaration[2].trimEnd()}\n  := ${lift ? 'Result.ok ' : ''}_root_.${name}`;
+    replaced.push({
+      rustPath, name, qualifiedName: `${crate}.${name}`, providerQualifiedName: name, kind, lift, providerKind: target.keyword, providerOpaque: target.keyword === 'axiom', textComparison: verdict, check: 'pending-lean-build',
+      signatureSha256: sha256(squash(declaration[2])), providerDeclSha256: target.blockSha256,
+    });
+  }
+  let result = parts.join('');
+  if (replaced.length > 0) {
+    const header = /^(public import Aeneas|import Aeneas)$/m.exec(result);
+    if (header === null) problems.push('the file has no `import Aeneas` line to add the provider import after');
+    else {
+      const keyword = header[1].startsWith('public') ? 'public import' : 'import';
+      result = result.replace(header[0], [header[0], ...provider.modules.filter((module) => !result.includes(`import ${module}\n`)).map((module) => `${keyword} ${module}`)].join('\n'));
+    }
+  }
+  return { text: result, replaced, assumed, copies, problems, usedAssume: [...usedAssume] };
+}
+
+// The check that makes Lean itself compare each alias with the constant it stands for, appended to
+// the consumer's published module so that the normal build runs it. An alias that elaborates is not
+// enough: elaboration may insert implicit arguments, synthesise instances or instantiate universes,
+// so the declared type of the alias could differ from the provider's. The check compares the
+// universe parameters and the declared types themselves, with nothing inserted; a constant, which
+// carries Result here, is compared with Result of the provider's type.
+function leanCheckBlock(items) {
+  const pairs = items.map((item) => `      (\`${item.qualifiedName}, \`${item.providerQualifiedName}, ${item.lift})`).join(',\n');
+  return [
+    '',
+    "/-! The declared type of each alias above is the type of the constant it stands for: equal universe parameters and definitionally equal types, with no implicit argument inserted (a constant, which carries Result here, is compared with Result of the provider's type). This module does not build when one is not. -/",
+    'open Lean Meta Elab Command in',
+    'run_cmd liftTermElabM do',
+    '  for (consumer, provider, lift) in [',
+    `${pairs}] do`,
+    '    let a ← getConstInfo consumer',
+    '    let b ← getConstInfo provider',
+    '    unless a.levelParams.length == b.levelParams.length do',
+    '      throwError "{consumer}: {a.levelParams.length} universe parameter(s), but {provider} has {b.levelParams.length}"',
+    '    let expected ← if lift then mkAppM ``Aeneas.Std.Result #[b.type] else pure b.type',
+    '    unless (← isDefEq a.type expected) do',
+    '      throwError "{consumer}: its type {a.type} is not the type {expected} of {provider}"',
+    '',
+  ].join('\n');
+}
+
+// The substitutions and then the stitching of every generated Lean file, recomputed from
+// the Aeneas outputs on disk. Returns the record that publication stores, the final
+// texts, and the reasons the edit cannot be made.
+function computeTransform(chain, raw) {
+  const spec = chain.attempt.spec;
+  const substitutions = spec.substitutions ?? [];
+  const reasons = [];
+  for (const entry of substitutions) if (!Object.hasOwn(raw, entry.file)) reasons.push(`a substitution names ${entry.file}, which is not a generated Lean file (${Object.keys(raw).join(', ')})`);
+  const providers = (spec.stitch ?? []).map((entry) => ({ ...entry, loaded: loadProvider(chain, entry.crate) }));
+  const texts = {};
+  const applied = [];
+  const files = {};
+  for (const [name, original] of Object.entries(raw)) {
+    const substituted = applySubstitutions(name, original, substitutions, raw);
+    reasons.push(...substituted.reasons);
+    applied.push(...substituted.applied);
+    texts[name] = substituted.text;
+  }
+  const consumerInventory = leanDeclarations(Object.values(texts), spec.crate);
+  const consumerNames = consumerInventory.declarations;
+  if (consumerInventory.duplicates.length > 0) reasons.push(`this crate's Lean declares ${consumerInventory.duplicates.slice(0, 6).join(', ')}${consumerInventory.duplicates.length > 6 ? ', ...' : ''} more than once, so a declaration of it is not a unique target`);
+  const stitched = providers.map(({ loaded }) => ({ provider: loaded.crate, providerStage: 'publish', providerStageSha256: loaded.stageSha256, modules: loaded.modules, replaced: [], assumed: [], copies: [], files: [] }));
+  const usedAssume = providers.map(() => new Set());
+  const leanChecks = [];
+  for (const name of Object.keys(texts)) {
+    const replacedHere = [];
+    providers.forEach(({ assume, loaded }, position) => {
+      const result = stitchText(texts[name], { crate: spec.crate, provider: loaded, assume, consumerNames });
+      result.usedAssume.forEach((prefix) => usedAssume[position].add(prefix));
+      texts[name] = result.text;
+      stitched[position].replaced.push(...result.replaced);
+      replacedHere.push(...result.replaced);
+      stitched[position].assumed.push(...result.assumed);
+      stitched[position].copies.push(...result.copies);
+      if (result.replaced.length > 0) stitched[position].files.push(name);
+      reasons.push(...result.problems.map((problem) => `${name}: ${problem}`));
+    });
+    if (replacedHere.length > 0) {
+      const block = leanCheckBlock(replacedHere);
+      texts[name] = `${texts[name].endsWith('\n') ? texts[name] : `${texts[name]}\n`}${block}`;
+      leanChecks.push({ file: name, module: spec.moduleRoot === undefined ? null : `${spec.moduleRoot}.${name.replace(/\.lean$/, '').split('/').join('.')}`, items: replacedHere.length, blockSha256: sha256(block), blockBytes: Buffer.byteLength(block), fileSha256: sha256(texts[name]) });
+    }
+    files[name] = { rawSha256: sha256(raw[name]), sha256: sha256(texts[name]) };
+  }
+  providers.forEach(({ assume, loaded }, position) => {
+    for (const prefix of assume) if (!usedAssume[position].has(prefix)) reasons.push(`stitch to ${loaded.crate}: the assume entry ${prefix} matches no axiom of this crate, so it is stale`);
+  });
+  return { record: { substitutions: applied, stitch: stitched, leanChecks, files }, texts, reasons };
+}
+
+// A crate whose LLBC reaches another target crate must import that crate's real
+// translation. Without a stitch entry every reached item stays an axiom in this crate's
+// Lean, an assumption about a function the attempt itself extracts.
+function reachProblems(chain) {
+  if (!chain.invocation.targets) return [];
+  const stitched = new Set((chain.attempt.spec.stitch ?? []).map((entry) => entry.crate));
+  return (chain.stages.charon.record.llbc?.foreignCrates ?? [])
+    .filter((entry) => entry.kind === 'target' && !stitched.has(entry.crate))
+    .map((entry) => `the LLBC reaches target crate ${entry.crate}, and the spec has no stitch entry for it, so its items would stay axioms here; add a stitch entry, or declare ${entry.crate} a non-target (the owner's decision)`);
+}
+
+// Every axiom left in the final Lean has to be accounted for. One that stands for an item
+// of another target crate must be a recorded assumption, and one with no Rust path cannot
+// be classified at all; both are refused, so no assumption about a target survives
+// unrecorded. Axioms for the crate's own items, a non-target or an external crate are the
+// disclosed assumptions of the externals records.
+function axiomProblems(chain, texts, stitch) {
+  const targets = (chain.invocation.targets ?? []).map((entry) => entry.crate);
+  if (targets.length === 0) return [];
+  const assumed = new Set(stitch.flatMap((entry) => entry.assumed.map((item) => item.name)));
+  const problems = [];
+  for (const [file, text] of Object.entries(texts)) {
+    for (const block of leanBlocks(text)) {
+      if (!block.axiom) continue;
+      const rustPath = RUST_ATTRIBUTE.exec(block.text)?.[2] ?? DOC_PATH.exec(block.text)?.[1] ?? null;
+      if (rustPath === null) problems.push(`${file}: the axiom ${block.name} carries no readable Rust path, so it cannot be classified`);
+      else if (rustPath.split('::')[0] !== chain.invocation.crate && targets.includes(rustPath.split('::')[0]) && !assumed.has(block.name)) {
+        problems.push(`${file}: the axiom ${block.name} stands for ${rustPath}, an item of target crate ${rustPath.split('::')[0]}, which stitching neither replaces nor records as assumed`);
+      }
+    }
+  }
+  return problems;
+}
+
+// The Lean files as they will be published: the edited texts when edits are declared,
+// the Aeneas output otherwise.
+function finalTexts(chain, transform) {
+  if (transform !== null) return transform.texts;
+  const outputs = chain.stages.aeneas.record.outputs;
+  return Object.fromEntries(Object.keys(outputs).filter((file) => file.endsWith('.lean')).sort().map((file) => [file, fs.readFileSync(path.join(chain.invocation.aeneasDest, file), 'utf8')]));
+}
+
+// Everything that stops this crate from being published, from its LLBC and final Lean.
+function publishProblems(chain, transform) {
+  return [...(transform?.reasons ?? []), ...reachProblems(chain), ...axiomProblems(chain, finalTexts(chain, transform), transform?.record.stitch ?? [])];
+}
+
+// The edit as the stages see it: nothing when the spec declares none.
+function transformOf(chain) {
+  const spec = chain.attempt.spec;
+  if ((spec.substitutions ?? []).length === 0 && (spec.stitch ?? []).length === 0) return null;
+  const outputs = chain.stages.aeneas.record.outputs;
+  const raw = Object.fromEntries(Object.keys(outputs).filter((file) => file.endsWith('.lean')).sort().map((file) => [file, fs.readFileSync(path.join(chain.invocation.aeneasDest, file), 'utf8')]));
+  return computeTransform(chain, raw);
 }
 
 function runPublish(chain) {
   const inv = chain.invocation;
   const aeneas = chain.stages.aeneas.record;
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), aeneas.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage recorded them');
-  const plan = publicationPlan(inv, aeneas.outputs);
+  const transform = transformOf(chain);
+  const problems = publishProblems(chain, transform);
+  if (problems.length > 0) {
+    return settle(beginStage(chain, 'publish'), { ...stageBase(chain, 'publish'), mapping: [], ownershipSha256: null, ...(transform === null ? {} : { transform: transform.record }) }, problems);
+  }
+  const outputs = { ...aeneas.outputs };
+  const sources = {};
+  if (transform !== null) {
+    const dest = path.join(chain.attempt.out, PUBLISH_DEST);
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest);
+    for (const [file, text] of Object.entries(transform.texts)) {
+      fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
+      fs.writeFileSync(path.join(dest, file), text);
+      outputs[file] = sha256(text);
+      sources[file] = path.join(dest, file);
+    }
+  }
+  const plan = publicationPlan(inv, outputs, sources);
   const files = beginStage(chain, 'publish');
   const reasons = [];
   let ownershipSha256 = null;
@@ -1294,21 +3596,104 @@ function runPublish(chain) {
   } catch (error) {
     reasons.push(error.message);
   }
-  return settle(files, { ...stageBase(chain, 'publish'), mapping: plan, ownershipSha256 }, reasons);
+  return settle(files, { ...stageBase(chain, 'publish'), mapping: plan, ownershipSha256, ...(transform === null ? {} : { transform: transform.record }) }, reasons);
 }
 
 const STAGE_RUNNERS = { charon: runCharon, aeneas: runAeneas, publish: runPublish };
 
+// The directory of the attempt a command acts on: the copy itself for one crate, the
+// crate's own directory for a multi-crate attempt (named with --crate).
+function attemptDirectory(flags, multi) {
+  if (!multi) {
+    if (flags.crate !== undefined) refuse('usage', '--crate is only for a multi-crate attempt');
+    return path.resolve(flags.out);
+  }
+  const unit = multi.units.find((entry) => entry.crate === flags.crate);
+  if (!unit) refuse('usage', `--crate is required and must be one of ${multi.units.map((entry) => entry.crate).join(', ')}`);
+  return unit.out;
+}
+
 function run(flags) {
   if (!Object.hasOwn(STAGE_RUNNERS, flags.step)) refuse('usage', `--step must be ${ATTEMPT_STAGES.join(', ')}`);
-  return STAGE_RUNNERS[flags.step](loadChain(path.resolve(flags.out), ATTEMPT_STAGES.indexOf(flags.step)));
+  return STAGE_RUNNERS[flags.step](loadChain(attemptDirectory(flags, readMulti(path.resolve(flags.out))), ATTEMPT_STAGES.indexOf(flags.step)));
+}
+
+// Where a crate's chain stands, from its stage records alone: the first stage
+// that is not completed, and how it ended.
+function progressOf(out) {
+  for (const stage of ATTEMPT_STAGES) {
+    const files = stagePaths(out, stage);
+    if (lexists(files.completed)) continue;
+    if (lexists(files.failed)) return `failed at ${stage}`;
+    if (lexists(files.pending)) return `interrupted at ${stage}`;
+    return `not run: ${stage} is next`;
+  }
+  return null;
+}
+
+function unitRow(unit) {
+  const base = { crate: unit.crate, package: unit.package, dir: unit.dir, imports: unit.imports ?? [] };
+  try {
+    return { ...base, status: 'complete', run: attemptStatusOf(unit.out).run };
+  } catch (error) {
+    if (!(error instanceof Refusal)) throw error;
+    return { ...base, status: progressOf(unit.out) ?? `refused: ${error.message}` };
+  }
 }
 
 // The completed chain, re-validated with the current invocation, cargo
 // configuration, toolchain identity, LLBC, Aeneas-output and published-file
-// hashes; the summary record-extraction stores.
+// hashes; the summary record-extraction stores. For a multi-crate attempt every
+// declared crate's chain must be complete: one failed or missing crate refuses
+// the whole status, so such an extraction is never recorded as a success. The
+// top-level run is the main crate's; run.units has one row per crate.
 function attemptStatus(flags) {
-  const chain = loadChain(path.resolve(flags.out), ATTEMPT_STAGES.length);
+  const multi = readMulti(path.resolve(flags.out));
+  if (!multi) {
+    const out = attemptDirectory(flags, null);
+    const chain = loadChain(out, ATTEMPT_STAGES.length);
+    // A unit of a multi-crate attempt is read through the copy, where the roster is checked; read
+    // alone, it would report complete while another crate of the attempt has failed.
+    if (chain.attempt.roster !== undefined) refuse('attempt-refused', `${out} is one crate of a multi-crate attempt; read it with attempt-status --out ${path.dirname(path.dirname(out))} --crate ${chain.attempt.spec?.crate ?? 'NAME'}`);
+    return attemptStatusOfChain(chain, out);
+  }
+  const rows = multi.units.map(unitRow);
+  // A complete crate's row carries its whole single-crate run, so a reader written for
+  // one crate reads any crate of the attempt unchanged.
+  const summary = (row) => {
+    const base = { crate: row.crate, package: row.package, dir: row.dir, status: row.status, imports: row.imports };
+    return row.status === 'complete' ? { ...base, stitch: [], ...row.run } : base;
+  };
+  if (flags.crate !== undefined) {
+    const row = rows.find((entry) => entry.crate === flags.crate);
+    if (!row) refuse('usage', `--crate must be one of ${rows.map((entry) => entry.crate).join(', ')}`);
+    return { message: `crate ${row.crate}: ${row.status}`, unit: summary(row), ...(row.status === 'complete' ? { run: row.run } : {}) };
+  }
+  const incomplete = rows.filter((row) => row.status !== 'complete');
+  if (incomplete.length > 0) {
+    refuse('attempt-refused', `the multi-crate attempt is not complete: ${incomplete.map((row) => `${row.crate} ${row.status}`).join('; ')}`, { units: rows.map(summary) });
+  }
+  const main = rows.find((row) => row.crate === multi.main);
+  const supported = rows.every((row) => row.run.supported);
+  const residuals = [...new Map(rows.flatMap((row) => row.run.residuals).map((entry) => [JSON.stringify(entry), entry])).values()];
+  return { message: `attempt complete for ${rows.length} crate(s) (${supported ? 'supported configuration' : 'unsupported configuration'})`, run: { ...main.run, supported, residuals, order: multi.order, rosterSha256: multi.rosterSha256, roster: multi.roster, units: rows.map(summary) } };
+}
+
+function crossCrate(foreignCrates, recorded) {
+  const dependsOn = foreignCrates.filter((entry) => entry.kind === 'target').map((entry) => entry.crate).sort();
+  const imports = recorded === null ? [] : recorded.stitch.map((entry) => entry.provider);
+  return {
+    dependsOn,
+    unstitched: dependsOn.filter((crate) => !imports.includes(crate)),
+    prerequisites: (recorded?.stitch ?? []).flatMap((entry) => entry.replaced.map((item) => ({ providerCrate: entry.provider, rustPath: item.rustPath }))),
+  };
+}
+
+function attemptStatusOf(out) {
+  return attemptStatusOfChain(loadChain(out, ATTEMPT_STAGES.length), out);
+}
+
+function attemptStatusOfChain(chain, out) {
   const { attempt: record, invocation: inv, stages } = chain;
   if (fileState(inv.llbc)?.sha256 !== stages.charon.record.llbcSha256) refuse('attempt-refused', 'the LLBC changed after the Charon stage');
   if (!exactlyFiles(entriesUnder(inv.aeneasDest), stages.aeneas.record.outputs)) refuse('attempt-refused', 'the Aeneas outputs changed after the Aeneas stage');
@@ -1318,14 +3703,39 @@ function attemptStatus(flags) {
     if (fileState(entry.projectPath)?.sha256 !== entry.sha256) refuse('attempt-refused', `${entry.projectPath} changed after publication`);
   }
   if (fileState(path.join(inv.publishDir, OWNERSHIP))?.sha256 !== stages.publish.record.ownershipSha256) refuse('attempt-refused', 'the publication ownership record changed');
-  const translation = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
-  if (!translation) refuse('attempt-refused', 'the publication record does not map translation.json');
+  const translationEntry = mapping.find((entry) => entry.attemptPath === path.join(inv.aeneasDest, 'translation.json'));
+  if (!translationEntry) refuse('attempt-refused', 'the publication record does not map translation.json');
+  // projectPath is absolute, as recorded; relativePath is the same file relative to the project
+  // root, so another checkout of the project can find it without the recording machine's paths.
+  const relativePath = (entry) => ({ ...entry, relativePath: path.relative(inv.projectRoot, entry.projectPath).split(path.sep).join('/') });
+  const translation = relativePath(translationEntry);
+  // The scope comes from the manifest the attempt is bound to, like the lock; an attempt record
+  // that names a different one is refused.
+  const copyManifest = preparedManifest(copyRoot(out)).manifest;
+  const scope = recordedScope(copyManifest);
+  if (record.scope !== undefined && !sameState(record.scope, scope)) refuse('attempt-refused', 'the scope recorded in the attempt differs from the scope in the manifest');
+  const recorded = stages.publish.record.transform ?? null;
+  const again = transformOf(chain);
+  const unaccounted = [...reachProblems(chain), ...axiomProblems(chain, finalTexts(chain, again), again?.record.stitch ?? [])];
+  if (unaccounted.length > 0) refuse('attempt-refused', `the attempt is not complete: ${unaccounted.join('; ')}`);
+  if ((again === null) !== (recorded === null)) refuse('attempt-refused', 'the spec declares substitutions or stitching that publication did not record, or the reverse');
+  if (again !== null) {
+    const staged = path.join(out, PUBLISH_DEST);
+    if (again.reasons.length > 0 || !sameState(again.record, recorded)) refuse('attempt-refused', `the substitutions and stitching no longer reproduce the published Lean${again.reasons.length > 0 ? `: ${again.reasons.join('; ')}` : ''}`);
+    if (!exactlyFiles(entriesUnder(staged), Object.fromEntries(Object.entries(again.record.files).map(([file, state]) => [file, state.sha256])))) refuse('attempt-refused', 'the edited Lean files changed after publication wrote them');
+    for (const [file, state] of Object.entries(again.record.files)) {
+      const entry = mapping.find((candidate) => candidate.projectPath === path.join(inv.publishDir, file));
+      if (entry?.sha256 !== state.sha256 || entry.attemptPath !== path.join(staged, file)) refuse('attempt-refused', `${file} was not published from the edited Lean`);
+    }
+  }
   return {
     message: `attempt complete (${record.supported ? 'supported configuration' : 'unsupported configuration'})`,
     run: {
       attemptSha256: chain.attemptSha256,
       stages: Object.fromEntries(Object.entries(stages).map(([stage, { sha256: hash }]) => [stage, hash])),
       manifestSha256: chain.manifestSha256,
+      scope,
+      ...(record.rosterSha256 === undefined ? {} : { rosterSha256: record.rosterSha256 }),
       supported: record.supported,
       residuals: record.residuals,
       trust: record.trust,
@@ -1333,30 +3743,50 @@ function attemptStatus(flags) {
       configSha256: record.configSha256,
       llbc: { path: inv.llbc, sha256: stages.charon.record.llbcSha256 },
       translation,
-      publication: mapping,
+      publication: mapping.map(relativePath),
+      crate: inv.crate,
+      publishDir: path.relative(inv.projectRoot, inv.publishDir),
+      // The Cargo.lock the copy was built against: read from the project, or generated in the copy.
+      lock: preparedManifest(copyRoot(out)).manifest.lock ?? null,
+      // What Charon flagged although it exited 0: the items it could not translate, by name.
+      hasErrors: stages.charon.record.llbc ? { value: stages.charon.record.llbc.hasErrors, items: stages.charon.record.llbc.items, itemCount: stages.charon.record.llbc.itemCount } : null,
+      // The declared edits of the generated Lean: substitutions, and the crates whose real
+      // translation this crate's Lean imports in place of axioms.
+      ...(recorded === null ? {} : { imports: recorded.stitch.map((entry) => entry.provider), stitch: recorded.stitch, substitutions: recorded.substitutions, leanChecks: recorded.leanChecks.map((check) => ({ ...check, relativePath: path.relative(inv.projectRoot, path.join(inv.publishDir, check.file)).split(path.sep).join('/') })) }),
+      // Cross-crate edges, present with or without stitching: the declared target crates this
+      // crate's LLBC reaches, the ones among them its Lean does not import (their items are
+      // still axioms here), and the provider items the stitched aliases stand for, each of
+      // which must be settled in its own crate before this one is.
+      ...(inv.targets && stages.charon.record.llbc?.foreignCrates ? crossCrate(stages.charon.record.llbc.foreignCrates, recorded) : {}),
+      // The crates the LLBC reaches, and the in-repo crates the owner chose not to verify
+      // with the sources of each that appeared (their items alone may become assumptions).
+      ...(stages.charon.record.llbc?.foreignCrates ? { foreignCrates: stages.charon.record.llbc.foreignCrates } : {}),
+      ...(inv.nonTargets ? { nonTargets: inv.nonTargets.map((entry) => ({ ...entry, sources: (stages.charon.record.llbc?.nonTargetSources ?? []).filter((source) => source.crate === entry.crate).map(({ file, sha256: hash }) => ({ file, sha256: hash })) })) } : {}),
     },
   };
 }
 
 const COMMANDS = {
   check: { required: ['project-root'], run: check },
-  prepare: { required: ['project-root', 'out'], run: prepare },
+  prepare: { required: ['project-root', 'out'], optional: ['lock', 'release'], run: prepare },
   'verify-restore': { required: ['out'], run: verifyRestore },
   'verify-tree': { required: ['out'], run: verifyTree },
   status: { required: ['out'], run: status },
   migrate: { required: ['project-root'], run: migrate },
   attempt: { required: ['out', 'spec'], run: attempt },
-  run: { required: ['out', 'step'], run },
-  'attempt-status': { required: ['out'], run: attemptStatus },
+  run: { required: ['out', 'step'], optional: ['crate'], run },
+  'attempt-status': { required: ['out'], optional: ['crate'], run: attemptStatus },
+  crates: { required: ['release'], optional: ['out', 'project-root'], run: listCrates },
+  'trim-workspace': { required: ['project-root', 'release', 'keep'], optional: ['dev-dependencies'], run: trimWorkspace },
 };
 
-function parseFlags(argv, required) {
+function parseFlags(argv, required, optional = []) {
   const flags = {};
   const rest = [...argv];
   while (rest.length > 0) {
     const flag = rest.shift();
     const key = flag.replace(/^--/, '');
-    if (![...required, 'format'].includes(key) || key === flag) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
+    if (![...required, ...optional, 'format'].includes(key) || key === flag) refuse('usage', `unknown argument ${JSON.stringify(flag)}`);
     const value = rest.shift();
     if (!value || value.startsWith('--')) refuse('usage', `${flag} requires a value`);
     flags[key] = value;
@@ -1376,7 +3806,7 @@ function main(argv) {
   try {
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, argv[0])) refuse('usage', `unknown command ${JSON.stringify(argv[0])}`);
     const command = COMMANDS[argv[0]];
-    const flags = parseFlags(argv.slice(1), command.required);
+    const flags = parseFlags(argv.slice(1), command.required, command.optional);
     format = flags.format ?? 'json';
     result = { ok: true, code: 'ok', command: argv[0], ...command.run(flags) };
   } catch (error) {

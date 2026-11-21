@@ -107,6 +107,17 @@ Record only the missing owner choices, using the current applicable evidence for
 
 - source revision and configuration/features (prefer an exact full commit; moving refs are not immutable);
 - the agreed scope, boundaries, conventions and single-crate/monorepo layout;
+- for a Rust repository with more than one crate that has a library, the crates that are verification
+  targets and the symbolic links the build does not read. Take both from the patch engine's `crates
+  --project-root` answer, run with the release of the recorded Aeneas/Charon setup (`auto-extract.md`,
+  "The crates of the repository, and the lock"): every in-repo crate is offered as a target and each
+  non-target is the owner's explicit decision with a reason; its `proposedUnreadLinks` lists each link
+  with its target and a reason to adopt. When the owner cuts the workspace down to the targets with
+  `trim-workspace`, take the links from that answer instead, because a listed link outside the copy's
+  inputs is refused as stale. Show the whole proposal and write the links to `extraction.unreadLinks`
+  only after the owner's yes, never by a hand edit of the configuration; without a yes the extraction
+  refuses those links. When no release is recorded yet, `/fvs:auto-extract` asks for the same choices
+  before it extracts;
 - the observer set, named once: what a caller or user of the target can see and therefore must not be
   able to tell apart after a source patch (return values, errors as callers match them, external
   effects, panic occurrence and the file and line a panic reports), and what is deliberately not observed;
