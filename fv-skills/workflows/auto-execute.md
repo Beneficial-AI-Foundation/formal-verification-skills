@@ -140,9 +140,11 @@ node "$AUTO" record-scope --project-root . --release DIR --confirm
 ```
 
 The first call only reports what it found and writes nothing. Run the second only after the owner agrees.
-Settling rewrites the state file, so a build check that already ran over the earlier state does not count for
-the settled one and runs again: settle the scope before that run. If
-the workspace holds several library crates, or the scan cannot tell, the command refuses and says so: a
+Settling rewrites the state file, and the Lean graph record binds that file's bytes, so a Lean graph record
+that was already made over the earlier state is no longer bound to the settled one and the Lean run behind it
+is repeated: settle the scope before that run. A build-check receipt does not bind the state file, and
+settling changes none of the Lean checks it is compared with, so it is not affected. If the workspace holds
+several library crates, or the scan cannot tell, the command refuses and says so: a
 multi-crate extraction is needed. A run of several crates that loses a crate's row or the crate list is not
 read as a smaller run; the crates stay owed until they are extracted again. A build-check receipt counts for a crate
 with stitches only while the Lean checks it verified are exactly the ones the extraction recorded; after any

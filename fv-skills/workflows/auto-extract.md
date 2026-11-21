@@ -25,8 +25,10 @@ node "$AUTO" read-state --project-root .
 Read the `code` field: `no-state` -> stop and point to `/fvs:auto-init`; `malformed-state` or
 `malformed-externals` -> print `message` and `nextStep` verbatim and stop, except when `nextStep` says to
 run `/fvs:auto-extract` again: the only fault of the state is then the recorded extraction, which cannot
-be read, and Step 4 replaces that one record (it says what is kept). On `ok`, take the
-recorded `state.choices.source` (revision and configuration) and `state.choices.scope`.
+be read, and Step 4 replaces that one record (it says what is kept). The refusal does not carry the
+choices, so read them from the state file it names in `file`, which still reads apart from the extraction.
+On `ok`, or in that case, take the recorded `state.choices.source` (revision and configuration) and
+`state.choices.scope`.
 
 ## Step 2: Check the checkout and the mode
 
