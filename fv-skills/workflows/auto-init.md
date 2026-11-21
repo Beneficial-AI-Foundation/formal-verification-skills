@@ -349,7 +349,9 @@ destination: to change the destination itself, the owner checks the file, delete
 init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
-`unknown` (below) so that a resume does not ask again.
+`unknown` (below) so that a resume does not ask again. If this session runs with permission prompts off (for
+example skip-permissions inside a sandbox), say that the check is optional, because no step can stop and
+ask, and offer the skip. The push destination above is recorded either way.
 
 **Tell the owner first**, in these words or close to them: some of the next commands may stop and ask you
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts

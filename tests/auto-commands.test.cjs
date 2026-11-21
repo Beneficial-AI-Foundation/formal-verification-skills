@@ -1228,6 +1228,12 @@ describe('auto command and workflow text', () => {
     }
   });
 
+  it('init offers to skip the permission check when the session runs with permission prompts off', () => {
+    const init = flat(read('fv-skills/workflows/auto-init.md'));
+    assert.match(init, /If this session runs with permission prompts off \(for example skip-permissions inside a sandbox\), say that the check is optional, because no step can stop and ask, and offer the skip/);
+    assert.match(init, /The push destination above is recorded either way/);
+  });
+
   it('every fvs-auto.mjs subcommand the workflows call exists', () => {
     const help = cli('--help').stdout;
     for (const name of members) {
