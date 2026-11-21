@@ -5,12 +5,12 @@ Use this reference for a v2 project, checker request, work packet, progress obse
 Read the actual recorded version first. New projects use v2; existing v1 projects keep their recorded
 choices, runtime, finite deadlines and receipt semantics. Reads do not migrate or rewrite them.
 
-Two routes read this page. The default route needs "Start and resume" for the run-policy choices,
-"Cancel or replace a worker on the default route", "Worker brief rules" and "Network and runner
-support". "Work and cancellation", "Periodic progress" and "Stop, reconcile and hand off" are
-operations of the optional strict lane only, which needs Agent Orchestrator in 3.0.0-rc3. They use
-work packets, start markers, assignments and `ao` observations that a default run never creates. Do
-not follow them to cancel or replace a worker of a default run.
+Two routes read this page. The default route, which the init workflow calls the relaxed path, needs
+"Start and resume" for the run-policy choices, "Cancel or replace a worker on the default route",
+"Worker brief rules" and "Network and runner support". "Work and cancellation", "Periodic progress"
+and "Stop, reconcile and hand off" are operations of the optional strict lane only, which needs Agent
+Orchestrator in 3.0.0-rc3. They use work packets, start markers, assignments and `ao` observations
+that a default run never creates. Do not follow them to cancel or replace a worker of a default run.
 </overview>
 
 ## Start and resume

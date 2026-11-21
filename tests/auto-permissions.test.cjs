@@ -258,6 +258,21 @@ describe('whole catalog uses only the permitted programs', () => {
     }
   });
 
+  it('can fail: an environment command in a probe, a Claude rule or a Codex rule is caught', () => {
+    for (const attempt of [
+      () => checkCommand('ao send --session x --message hi', 'control'),
+      () => checkCommand('git fetch origin && ao send x', 'control'),
+      () => checkClaudeRule('Bash(orca orchestration send *)', 'control'),
+      () => checkClaudeRule('Bash(bd remember *)', 'control'),
+      () => checkClaudeRule('Edit(/.claude/**)', 'control'),
+      () => checkCodexRule({ pattern: ['ao', 'send'] }, 'control'),
+      () => checkCodexRule({ pattern: ['gh', 'pr', 'view'], match: ['orca worktree ps'] }, 'control'),
+    ]) assert.throws(attempt, assert.AssertionError);
+    checkCommand('gh pr view 1 --repo Acme/proj', 'control');
+    checkClaudeRule('Bash(git fetch *)', 'control');
+    checkCodexRule({ pattern: ['git', 'ls-remote'], match: ['git ls-remote --heads origin'] }, 'control');
+  });
+
   it('holds for the rules that the write step actually generates, Claude settings and Codex rules file', { skip: pushSkip }, () => {
     const steps = 'author-edit,lake-build,gh-read,git-read,git-push';
     const preview = run('write-destination', base());

@@ -163,7 +163,7 @@ describe('seat reference', () => {
 
     it('limits the controller procedures to the strict lane and says so on the page and in each heading', () => {
       const flat = execution.replace(/\s+/g, ' ');
-      assert.match(flat, /Two routes read this page/);
+      assert.match(flat, /Two routes read this page\. The default route, which the init workflow calls the relaxed path, needs/);
       assert.match(flat, /operations of the optional strict lane only, which needs Agent Orchestrator in 3\.0\.0-rc3/);
       assert.match(flat, /Do not follow them to cancel or replace a worker of a default run/);
       for (const heading of STRICT_SECTIONS) {
