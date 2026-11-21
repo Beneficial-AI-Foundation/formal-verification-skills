@@ -9,14 +9,13 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fixtures = require('./helpers/multicrate-fixtures.cjs');
 
 const { ROOT, extracted, readState, writeState, stateFile, git, cli, unit, fn } = fixtures;
-const TMP = fs.realpathSync(os.tmpdir());
 const PROFILE_FIXTURES = path.join(__dirname, 'fixtures', 'auto-profile');
 // The extraction record as an earlier FVS wrote it, taken from a state file of that time.
 const LEGACY = require('./fixtures/auto-lean-graph/recorded/bound-positive/state.json').extraction;
@@ -142,16 +141,64 @@ describe('an extraction recorded before the scope was kept', () => {
   });
 });
 
+// A record that a later step has already bound to: the recorded state of an earlier FVS beside the files it published,
+// as the Lean graph tests use it. Settling the scope must leave that binding, and the rest of the state, as it was.
+const GRAPH = path.join(ROOT, 'scripts', 'fvs-lean-graph.mjs');
+const GRAPH_FIXTURES = path.join(__dirname, 'fixtures', 'auto-lean-graph');
+const recorded = (file) => path.join(GRAPH_FIXTURES, 'recorded', 'bound-positive', file);
+
+describe('an old record that a later step already bound to', () => {
+  function boundProject() {
+    const root = fixtures.temporaryDirectory('fvs-scope-bound-');
+    fs.cpSync(path.join(GRAPH_FIXTURES, 'bound-project'), root, { recursive: true });
+    fs.mkdirSync(path.dirname(stateFile(root)), { recursive: true });
+    fs.copyFileSync(recorded('state.json'), stateFile(root));
+    return root;
+  }
+  const graphOf = (root) => JSON.parse(spawnSync(process.execPath, [GRAPH, recorded('lean.json'), '--library', 'M1demo,Specs',
+    '--log', recorded('probe.log'), '--receipt', recorded('receipt.json'), '--project-root', root,
+    '--manifest', path.join(GRAPH_FIXTURES, 'extraction', 'attempt-manifest.json'), '--constants', recorded('constants.json')], { encoding: 'utf8' }).stdout);
+  const without = (extraction) => { const { scope: _scope, scopeSettled: _settled, ...rest } = extraction; return rest; };
+
+  it('changes nothing but the two scope fields, leaves the extraction run to bind to, and reads at the phase a record with its scope has', () => {
+    const root = boundProject();
+    assert.equal(graphOf(root).binding.status, 'bound');
+    const { extraction: oldExtraction, ...oldRest } = readState(root);
+    settle(root, found({ kind: 'single-crate', basis: 'cargo', libraryCrates: ['m1demo'] }), { confirm: true });
+    // A Lean run receipt binds the bytes of the state file along with the published files, so a receipt made
+    // over the old state no longer matches: this is that receipt's own rule for any change to the state, and
+    // the graph says unbound, never bound to something else. The run it would bind to is as it was.
+    const after = graphOf(root);
+    assert.equal(after.binding.status, 'unbound');
+    assert.deepEqual(after.binding.reasons, ['run-not-bound']);
+    const { extraction, ...rest } = readState(root);
+    assert.deepEqual(rest, oldRest, 'nothing outside the extraction is touched');
+    assert.deepEqual(without(extraction), oldExtraction, 'nothing in the extraction but the two scope fields is touched');
+    // The phase is the one a record that had its scope from the start has.
+    const hand = boundProject();
+    const state = readState(hand);
+    state.extraction.scope = { kind: 'single-crate', basis: 'cargo', libraryCrates: ['m1demo'] };
+    writeState(hand, state);
+    const settled = cli('read-state', '--project-root', root).json;
+    const original = cli('read-state', '--project-root', hand).json;
+    assert.equal(settled.code, 'ok', JSON.stringify(settled));
+    assert.equal(settled.phase, original.phase);
+    assert.equal(settled.nextAction, original.nextAction);
+    assert.notEqual(settled.phase, 'extract');
+  });
+});
+
 // The same against a real workspace and the extraction engine's own scan.
 const MULTI_TOOLS = path.join(__dirname, 'helpers', 'fake-multicrate-tools.cjs');
 const multi = fs.existsSync(MULTI_TOOLS) ? require(MULTI_TOOLS) : null;
 const SINGLE_SPEC = { release: multi?.RELEASE, cargoArgs: ['--locked', '--package', 'toy-lib'], crate: 'toy_lib', publishDir: 'Lean/Lib', moduleRoot: 'Toy.Lib' };
 
 // Runs `fn` with the environment the fake tools of the workspace expect, and the stub profile for setup.
-function withTools(ws, fn) {
+function withTools(ws, fn, extra = {}) {
   const environment = {
     HOME: path.join(ws.tools.scratch, 'home'), RUSTUP_HOME: path.join(ws.tools.scratch, 'rustup'), CARGO_HOME: ws.tools.cargoHome,
     PATH: [path.join(PROFILE_FIXTURES, 'bin'), '/usr/bin', '/bin'].join(path.delimiter), FVS_TOOLS_HOME: path.join(PROFILE_FIXTURES, 'no-fvs-tools'),
+    ...extra,
   };
   const saved = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -213,18 +260,21 @@ describe('an old record settled against a real workspace', { skip: multi === nul
     const head = multi.run(ws, ['crates', '--project-root', ws.project, '--release', multi.RELEASE]).result;
     assert.equal(head.scope.kind, 'multi-crate', 'the working tree now holds two library crates');
     const release = path.join(ws.project, multi.RELEASE);
-    const seen = withTools(ws, () => auto.recordScope({ projectRoot: ws.project, release }));
+    // The export goes to a temporary folder of this test alone, so what is left behind can be told exactly.
+    const scratch = fixtures.temporaryDirectory('fvs-scope-tmp-');
+    const call = (options = {}) => withTools(ws, () => auto.recordScope({ projectRoot: ws.project, release, ...options }), { TMPDIR: scratch });
+    const seen = call();
     assert.equal(seen.code, 'scope-found', seen.message);
     assert.deepEqual(seen.scope, { kind: 'single-crate', basis: 'cargo', libraryCrates: ['toy_lib'] });
     const unchanged = fs.readFileSync(stateFile(ws.project), 'utf8');
-    assert.equal(withTools(ws, () => auto.recordScope({ projectRoot: ws.project, release })).code, 'scope-found');
+    assert.equal(call().code, 'scope-found');
     assert.equal(fs.readFileSync(stateFile(ws.project), 'utf8'), unchanged, 'the unconfirmed calls write nothing');
-    assert.equal(withTools(ws, () => auto.recordScope({ projectRoot: ws.project, release, confirm: true })).code, 'recorded');
+    assert.equal(call({ confirm: true }).code, 'recorded');
     const { extraction } = readState(ws.project);
     assert.equal(extraction.scope.kind, 'single-crate');
     assert.equal(extraction.scopeSettled.sourceCommit, extractedAt);
     assert.notEqual(cli('read-state', '--project-root', ws.project).json.phase, 'extract');
-    assert.deepEqual(fs.readdirSync(TMP).filter((name) => name.startsWith('fvs-scope-')), [], 'the export was removed');
+    assert.deepEqual(fs.readdirSync(scratch), [], 'the export was removed after every call');
   });
 
   it('refuses a record whose recorded commit holds two library crates', () => {
