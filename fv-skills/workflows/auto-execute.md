@@ -281,7 +281,8 @@ the build check as above and do not start the strict lane for any of them.
 No probe is needed for this pipeline. Read the `auto-execute` stage line in the profile first
 (`auto-setup.md`, "Probes and stage lines", says what each line means); without `probe-lean`, proof
 acceptance through the strict lane refuses, and the build check above is the route. When `probe-lean`
-works, the strict lane stays available: dependency-ready proof units, serial independent acceptance and
+works, the strict lane stays available (in 3.0.0-rc3 it drives an Agent Orchestrator controller and needs
+its `ao` CLI): dependency-ready proof units, serial independent acceptance and
 the human review bundle, driven by `fv-skills/references/auto-transitions.md` and
 `fv-skills/references/auto-review-bundle.md`. Keep the agreement's optional budget and its memory
 disposition (`auto-execution.md`, `auto-resume.md`). The strict lane's human re-specification command is

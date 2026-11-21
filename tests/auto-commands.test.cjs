@@ -1304,8 +1304,12 @@ describe('auto command and workflow text', () => {
     assert.match(body, /Give each worktree its own copy of the primary checkout's Lake packages folder \(a copy-on-write clone is fast where the filesystem supports it\), or fall back to `lake exe cache get` and a dependency build/);
     assert.match(body, /never share one packages folder between worktrees, because concurrent builds would write the same package outputs/);
     assert.doesNotMatch(body, /point the worktrees at one shared packages folder/);
-    assert.match(body, /New worker worktrees start from the project's remote base branch, so a commit that exists only in your local checkout never reaches an author or a reviewer/);
-    assert.match(body, /Push the working branch to the project's own repository and make it the base new workers start from; with AO, set the project's default branch to it once it exists on the remote/);
+    assert.match(body, /Many environments cut new worker worktrees from the project's remote base branch, so a commit that exists only in your local checkout never reaches an author or a reviewer/);
+    assert.match(body, /Push the working branch to the project's own repository and make it the base new workers start from, in whatever way your environment sets the base of new worktrees/);
+    assert.doesNotMatch(body, /with AO, set the project's default branch/);
+    assert.match(body, /When you cannot write into a worker's worktree \(for example a worker in a container\), tell the worker to fetch its own packages with `lake exe cache get`/);
+    assert.match(body, /When you cannot read a reviewer's worktree \(for example a reviewer in a container\), have the reviewer return the report text in its final reply/);
+    assert.match(body, /in 3\.0\.0-rc3 it drives an Agent Orchestrator controller and needs its `ao` CLI/);
     assert.match(body, /The spec and proof pull requests use it as their base unless the agreement says otherwise/);
     assert.match(body, /Spawn one author first\. Check that its worktree head is the working branch head and that a new spec file compiles there, and only then spawn the rest/);
     assert.match(body, /Read the public items of the in-scope Rust modules and cross-check the list against the generated Lean/);

@@ -1,7 +1,7 @@
 # Who runs each auto-track operation
 
 <overview>
-Three seats take part in an auto-track run. The **owner** is the person. The **orchestrator** is the Agent Orchestrator session that coordinates the run and holds the project's primary checkout; the engine pages call that session the controller. A **worker** is an Agent Orchestrator session started for one assigned node, in its own worktree. This page says which seat runs each engine operation, so nobody has to guess whose session a command belongs in.
+Three seats take part in an auto-track run. The **owner** is the person. The **orchestrator** is the agent session of your development environment that coordinates the run and holds the project's primary checkout; the engine pages call that session the controller. A **worker** is a session your environment started for one assigned node, in its own worktree. FVS names no particular development environment and checks for none; "What the orchestrator needs from your environment" below lists what the orchestrator uses. This page says which seat runs each engine operation, so nobody has to guess whose session a command belongs in.
 
 The engine does not authenticate who typed a command. It checks recorded evidence and state. A seat is therefore a rule about trust and workflow, not a lock. If the host refuses a command in the seat that should run it, do not move the command to a seat that does not own it. Hand the same command to the owner to run in a terminal; see "When a seat cannot run its command" below and the permission guidance in `auto-setup.md`.
 </overview>
@@ -11,8 +11,24 @@ The engine does not authenticate who typed a command. It checks recorded evidenc
 | Seat | Who it is | Decides | Never does |
 |------|-----------|---------|------------|
 | Owner | The person who owns the project | The scope agreement and the final pull request | Nothing is hidden from the owner |
-| Orchestrator | The coordinating Agent Orchestrator session, called the controller in the engine pages | Which authorized step runs next | Writes the owner's reply, or decides the final pull request |
-| Worker | One Agent Orchestrator session in its own worktree | How to prove its assigned node | Records an agreement, accepts a proof, or writes the primary checkout's recorded state |
+| Orchestrator | The coordinating session of your development environment, called the controller in the engine pages | Which authorized step runs next | Writes the owner's reply, or decides the final pull request |
+| Worker | One session your environment started, in its own worktree | How to prove its assigned node | Records an agreement, accepts a proof, or writes the primary checkout's recorded state |
+
+## What the orchestrator needs from your environment
+
+The orchestrator session uses these capabilities of the development environment it runs in. The environment may be any that starts workers in their own git worktrees and lets the orchestrator message them. The columns show how each capability looks in two environments. They show the shape of a command and are not instructions: check the exact spelling with your environment's own help. The Orca column is example, not tested. The auto track was built in Agent Orchestrator, and FVS records no tested version of either environment.
+
+| Capability | Agent Orchestrator (example) | Orca (example, not tested) |
+|---|---|---|
+| Start a worker in its own worktree, from the working branch | `ao spawn`; new workers start from the project's default branch | `orca orchestration worker-start --spec-file BRIEF --worktree new-top-level --repo id:REPO --name NAME --agent claude --base-branch REF` |
+| Message a worker | `ao send --session ID --message TEXT` | `orca orchestration send --to dispatch:ID --subject TOPIC --body TEXT` |
+| Interrupt a busy worker | `ao send --session ID --steer --message TEXT` | No interrupt command found: a message arrives when the worker's current turn ends |
+| Read a worker's report | the worker's `ao report` note, or its terminal output | the worker ends with `worker_done` and the orchestrator is woken; `orca agent read ID --json` reads its output |
+| Find a worker's worktree | `ao session get` | `orca worktree show --worktree SELECTOR --json` |
+| Stop a worker | `ao kill` | not checked: see the Orca guide on recovery and cleanup |
+| Set the base of new worktrees | the project's default branch | `--base-branch REF`, or `orca repo set-base-ref --repo id:REPO --ref origin/BRANCH` |
+
+Beads (`bd`) is optional: only the project memory (`auto-memory.md`) uses it, and only when the agreement records memory.
 
 ## Engine operations: `fvs-auto.mjs`
 
@@ -82,14 +98,18 @@ These are rules for the orchestrator's own commands and messages. The worker rul
 commit, test vectors, a standalone push with the FVS push command, the ownership map) are in `auto-execution.md`, "Worker brief
 rules". Put them in each worker brief.
 
-- **Redirect a busy worker with `ao send --steer`.** A plain `ao send` to a worker that is in a turn
-  queues behind that turn. When the scope or the plan changes, for example when work is split
-  between two workers, steer at once: `ao send --session ID --steer --message TEXT`. A worker that
-  keeps going on the old scope can finish work that another worker already owns.
-- **Keep Agent Orchestrator's native reviewer off the pull requests.** Its review is posted on the
-  pull request as comments, and the auto track lets no agent post a GitHub comment or review: only
-  the owner does. The fresh review in the pipeline is the review of record. Switch the reviewer off
-  before workers start:
+- **Redirect a busy worker at once.** A plain message to a worker that is in a turn usually waits until
+  the turn ends. When the scope or the plan changes, for example when work is split between two
+  workers, use your environment's way to interrupt or steer the worker; if it has none, stop the worker
+  and start a replacement with the new brief and the ownership map. A worker that keeps going on the old
+  scope can finish work that another worker already owns. Example, Agent Orchestrator:
+  `ao send --session ID --steer --message TEXT`.
+- **Keep your environment's automatic reviewer off the pull requests.** If your environment has a
+  built-in reviewer that posts comments or reviews, switch it off before workers start and never
+  trigger it on a proof or spec pull request of the run. The auto track lets no agent post a GitHub
+  comment or review: only the owner does. The fresh review in the pipeline is the review of record.
+  Example, Agent Orchestrator, where the native reviewer posts its review on the pull request as
+  comments:
   1. For the project, set `autoReview` to `false` in the project configuration. New workers copy
      this default. `ao project set-config PROJECT --config-json JSON` replaces the whole saved
      configuration, and it ignores a key it does not know, so a typo can leave it empty. Read the
@@ -100,14 +120,25 @@ rules". Put them in each worker brief.
   3. Never run `ao review trigger` on a proof or spec pull request of the run.
   A worker that only reviews someone else's pull request is claimed with
   `ao session claim-pr PR --no-takeover --review`. That claim already turns native auto-review off
-  for that session.
+  for that session. Orca: the Orca guide names no built-in pull request reviewer (not found; check
+  your version).
+- **Reports.** A worker reports through its environment's report command or its final reply, and the
+  orchestrator reads it the way its environment shows worker output. A report is a pointer, not
+  evidence: it names the result, the exit status and the path of the evidence, and the evidence stays
+  in a file in the worker's worktree or in a commit on the branch pushed with the FVS push command. A
+  report channel can have a short length limit (the Agent Orchestrator `ao report` note does), so keep
+  the report to the result and the evidence path. Acceptance never depends on a report: it comes from
+  the build-check receipt on the published head. If the orchestrator cannot read a worker's worktree
+  (for example a worker in a container), the worker returns the text the orchestrator needs in its
+  final reply, and the orchestrator saves it where the workflow says. If the orchestrator cannot write
+  into a worker's worktree, the worker fetches its own Lake packages (`auto-top-specs.md`, "Prepare the working branch").
 - **Keep the ownership map and the three commits.** The orchestrator holds the map of items, owners
   and files, and the status line with the accepted, the published and the recorded commit
   (`auto-execution.md`, "Worker brief rules"). A worker never carries them across a handoff on its own.
 
 ## When a seat cannot run its command
 
-A stock Agent Orchestrator orchestrator is set up to coordinate: it starts workers, sends messages and reads reports. Many orchestrator rows above are shell commands that change recorded state, and the host's permission checks may refuse some of them, for example a record step that replaces an agreement. This is a known friction, not a failure of the run.
+An orchestrator session is usually set up to coordinate: it starts workers, sends messages and reads reports. Many orchestrator rows above are shell commands that change recorded state, and the host's permission checks may refuse some of them, for example a record step that replaces an agreement. This is a known friction, not a failure of the run.
 
 1. Do not retry the same command in a loop, and do not ask a worker to run an orchestrator row.
 2. Send the owner the exact command in words (the helper prints it for the agreement). The owner runs it in a terminal of their own.

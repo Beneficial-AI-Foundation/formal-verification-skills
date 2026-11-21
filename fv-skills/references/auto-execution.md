@@ -154,9 +154,9 @@ claim. The evidence named here is what the orchestrator keeps.
   that owns it and the files that worker may change. Put it in the brief of every continuation,
   replacement and handoff. Confirm a reassignment against the table before a worker resumes, so that
   two workers do not prove the same item or change the same file.
-- **Steer a busy worker.** A plain `ao send` to a worker in a turn waits behind that turn. To change
-  what it does now, use `ao send --session ID --steer --message TEXT`. Report notes (`ao report`)
-  have a short length limit, so keep them to the result and the evidence path.
+- **Steer a busy worker.** See `auto-seats.md`, "Redirect a busy worker at once". A worker's report
+  channel can have a short length limit (the Agent Orchestrator `ao report` note does), so keep a report
+  to the result and the evidence path, and leave the evidence in a file or a commit.
 - **macOS.** There is no `timeout` command. To cap a command, use the tool's own timeout option, or
   `perl -e 'alarm shift; exec @ARGV' SECONDS COMMAND ARGS`. BSD `sed` needs a suffix after `-i`:
   write `sed -i.bak EXPRESSION FILE` and delete the `.bak` file, which also works with GNU `sed`.

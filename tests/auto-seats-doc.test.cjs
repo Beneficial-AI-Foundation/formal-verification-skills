@@ -115,6 +115,37 @@ describe('seat reference', () => {
     assert.match(flat, /waiting for the owner to run the record step/);
   });
 
+  it('lists what the orchestrator needs from the environment, marks the Orca examples as untested and requires no environment', () => {
+    const flat = text.replace(/\s+/g, ' ');
+    const start = flat.indexOf('## What the orchestrator needs from your environment');
+    assert.notEqual(start, -1);
+    const section = flat.slice(start, flat.indexOf('## Engine operations'));
+    assert.match(flat, /FVS names no particular development environment and checks for none/);
+    assert.match(section, /\| Capability \| Agent Orchestrator \(example\) \| Orca \(example, not tested\) \|/);
+    for (const capability of ['Start a worker in its own worktree', 'Message a worker', 'Interrupt a busy worker', 'Read a worker\'s report', 'Find a worker\'s worktree', 'Stop a worker', 'Set the base of new worktrees']) {
+      assert.ok(section.includes(`| ${capability}`), capability);
+    }
+    assert.match(flat, /Redirect a busy worker at once/);
+    assert.match(flat, /Keep your environment's automatic reviewer off the pull requests/);
+    assert.match(flat, /Beads \(`bd`\) is optional/);
+    assert.doesNotMatch(flat.slice(0, flat.indexOf('## What the orchestrator needs')), /Agent Orchestrator session/, 'the seats are defined without naming an environment');
+  });
+
+  it('says what a worker returns when the orchestrator cannot read or write its worktree', () => {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, /A report is a pointer, not evidence/);
+    assert.match(flat, /Acceptance never depends on a report: it comes from the build-check receipt on the published head/);
+    assert.match(flat, /If the orchestrator cannot read a worker's worktree \(for example a worker in a container\), the worker returns the text the orchestrator needs in its final reply/);
+    assert.match(flat, /If the orchestrator cannot write into a worker's worktree, the worker fetches its own Lake packages/);
+  });
+
+  it('is honest that the strict lane needs the Agent Orchestrator CLI in 3.0.0-rc3', () => {
+    for (const name of ['auto-top-specs', 'auto-execute']) {
+      const workflow = fs.readFileSync(path.join(ROOT, 'fv-skills', 'workflows', `${name}.md`), 'utf8').replace(/\s+/g, ' ');
+      assert.match(workflow, /in 3\.0\.0-rc3 it drives an Agent Orchestrator controller and needs its `ao` CLI/, name);
+    }
+  });
+
   it('is linked from the setup guide and the init workflow', () => {
     for (const file of [
       path.join(ROOT, 'fv-skills', 'references', 'auto-setup.md'),
