@@ -123,7 +123,7 @@ rerun is not permission to repeat that effect.
 Run the compatibility profile and reuse or record the initial roadmap agreement, source revision,
 configuration, bounded scope and worker limit. V2 supports an optional total budget; legacy per-node
 hours are recorded but not enforced, as there is no arbitrary per-node proof timeout. Reuse current
-owner choices without repeated interviewing; material changes need confirmation. Fresh rc2 setup
+owner choices without repeated interviewing; material changes need confirmation. Fresh rc3 setup
 requires the declared Aeneas/Charon locally even for a prepared extraction; see `auto-setup.md`. No
 probe is needed for setup or extraction, and a missing probe never stops it.
 

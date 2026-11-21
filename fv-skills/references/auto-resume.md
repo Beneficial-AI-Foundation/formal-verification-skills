@@ -10,7 +10,7 @@ ordering. A `reconciled` result is neither execution permission nor a proof rece
 
 </purpose>
 
-## Rc2 human-feedback boundary
+## Rc3 human-feedback boundary
 
 For AUTO owner feedback that revises previously reviewed contracts after end/partial results,
 report `unsupported: human re-specification is not available in 3.0.0-rc3` and stop before

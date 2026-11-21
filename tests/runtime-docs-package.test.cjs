@@ -198,9 +198,9 @@ if (process.argv.includes('--package-fixture')) {
     assert.ok(flatReadme.includes('decides what is accepted on the default path.'));
     assert.ok(!flatReadme.includes('Initial scope and execution grants remain explicit'));
   });
-  it('rc2 onboarding separates exact source installation from optional project memory', () => {
+  it('rc3 onboarding separates exact source installation from optional project memory', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
-    const rc = setup.slice(setup.indexOf('## Rc2 exact-source installation'), setup.indexOf('## V2 run policy'));
+    const rc = setup.slice(setup.indexOf('## Rc3 exact-source installation'), setup.indexOf('## V2 run policy'));
     for (const token of ['FVS_SHA=', 'git -C "$FVS_SOURCE" rev-parse HEAD', '--claude --local',
       'pi install "$FVS_SOURCE" --local', 'each AO worker worktree', 'existing Beads', '1.3.1', 'worker-readonly']) {
       assert.ok(rc.includes(token), token);
@@ -211,9 +211,9 @@ if (process.argv.includes('--package-fixture')) {
     assert.match(rc, /version string.*floating branch/s);
   });
 
-  it('rc2 setup and help describe the actual prerequisite and continuation boundaries', () => {
+  it('rc3 setup and help describe the actual prerequisite and continuation boundaries', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
-    const rc = section(setup, '## Rc2 exact-source installation', '## V2 run policy');
+    const rc = section(setup, '## Rc3 exact-source installation', '## V2 run policy');
     assert.ok(rc.indexOf('scripts/build-hooks.js') < rc.indexOf('bin/install.js'));
     for (const token of ['hooks/dist/fvs-check-update.js', 'hooks/dist/fvs-statusline.js',
       'raw Git checkout', 'mcpServers.lean-lsp', 'before native startup', 'externally prepared',
@@ -264,19 +264,19 @@ if (process.argv.includes('--package-fixture')) {
     assert.doesNotMatch(help, /authorized v2 controller context|production driver/);
     for (const file of ['commands/fvs/auto-init.md', 'fv-skills/workflows/auto-init.md']) {
       const body = fs.readFileSync(path.join(ROOT, file), 'utf8');
-      assert.match(body, /Fresh rc2 setup requires the declared Aeneas/);
+      assert.match(body, /Fresh rc3 setup requires the declared Aeneas/);
       assert.match(body, /externally\s+prepared/);
       assert.match(body, /profile-blocked/);
     }
     assert.match(fs.readFileSync(path.join(ROOT, 'fv-skills/workflows/auto-init.md'), 'utf8'), /a missing Aeneas or Charon is a warning/);
   });
 
-  it('rc2 source status guard stops a failed Git command before the installation sentinel', () => {
+  it('rc3 source status guard stops a failed Git command before the installation sentinel', () => {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
     const block = setup.match(/```bash\n([ \t]*FVS_SOURCE=[\s\S]*?)```/)[1];
     const guard = block.split('\n').map(line => line.trim()).filter(line => line.startsWith('FVS_SOURCE_STATUS=') || line.startsWith('test -z ')).join('\n');
     assert.ok(guard);
-    const area = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-rc2-status-'));
+    const area = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-rc3-status-'));
     const bin = path.join(area, 'bin'); fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nprintf \'%s\' "$FVS_GIT_STDOUT"\nexit "$FVS_GIT_EXIT"\n', { mode: 0o755 });
     try {

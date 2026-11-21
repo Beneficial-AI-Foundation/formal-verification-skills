@@ -87,7 +87,7 @@ Its `stages:` lines say up front whether each stage has a route and what is miss
 learns of a gap before answering anything (`auto-setup.md`, "Probes and stage lines", explains them).
 No probe is needed for setup or extraction, and a missing probe never stops it.
 
-Fresh rc2 setup requires the declared Aeneas and Charon executables locally even for an externally
+Fresh rc3 setup requires the declared Aeneas and Charon executables locally even for an externally
 prepared, validated extraction. A missing executable still blocks `init-state`; preserve and report
 its `profile-blocked` next step. After separately authorized prerequisite setup, rerun the profile and
 resume this workflow. Executable presence does not qualify a tuple or replace the bound extraction's

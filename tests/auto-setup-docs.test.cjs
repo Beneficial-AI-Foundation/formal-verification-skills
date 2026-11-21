@@ -251,7 +251,7 @@ describe('auto-setup reference: prerequisites', () => {
     assert.match(doc, /The profile and resolver install no prerequisites/);
     assert.match(doc, /you install every prerequisite below yourself/);
     assertOnlyReadOnlyExamples(raw);
-    const manual = flat(section(raw, 'Rc2 exact-source installation'));
+    const manual = flat(section(raw, 'Rc3 exact-source installation'));
     assert.match(manual, /After permission for these exact local writes/);
     assert.match(manual, /FVS installs none of those tools/);
     assert.match(manual, /installing FVS never runs `bd init`, migrates a store or changes Beads settings/);
@@ -322,7 +322,7 @@ describe('auto-setup reference: tested matrix', () => {
   it('keeps whole-guide support wording bound to the recorded verdict names', () => {
     assertBoundedVerdictWording(raw);
     assert.match(doc, /Neither an installed version line nor unit fixtures establish full AO\/Lean factory or cloud support/);
-    for (const heading of ['Rc2 exact-source installation', 'Tested matrix']) {
+    for (const heading of ['Rc3 exact-source installation', 'Tested matrix']) {
       const blanket = raw.replace(`## ${heading}`, `## ${heading}\n\nFVS is supported on every host.`);
       assert.throws(() => assertBoundedVerdictWording(blanket), /not match/);
     }

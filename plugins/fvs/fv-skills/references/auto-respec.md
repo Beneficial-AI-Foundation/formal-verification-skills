@@ -39,7 +39,7 @@ Internal revision records retain the initial scope, feedback payload and origina
 Their diagnostic readers check correspondence and current observations against the recorded
 specification, fresh review, proof, check and serial acceptance stages. These APIs create no proof,
 dispatch, human approval or publication authority and run no model or proof compiler.
-They do not provide a public human-feedback continuation in rc2.
+They do not provide a public human-feedback continuation in rc3.
 
 </overview>
 
@@ -49,7 +49,7 @@ Retained diagnostic consumer only:
 node <installed-scripts>/fvs-auto-respec.mjs verify --request CURRENT.json --out EXISTING_RESULT
 ```
 
-Its output reports internal evidence only; it does not enable human re-specification in rc2.
+Its output reports internal evidence only; it does not enable human re-specification in rc3.
 
 The JS operations are `runRespec({request,out})` and `verifyRespecResult({request,out})`. The consumer
 provides its independently held current request. Verification creates separate bounded evidence;

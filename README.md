@@ -11,7 +11,7 @@ directly from papers. You choose the targets, review the statements and decide w
 
 ## SWVF 3.0.0-rc3 source preview
 
-Use a reviewed full commit SHA and the [rc2 setup checklist](fv-skills/references/auto-setup.md#rc2-exact-source-installation)
+Use a reviewed full commit SHA and the [rc3 setup checklist](fv-skills/references/auto-setup.md#rc3-exact-source-installation)
 for SWVF. The version label alone does not establish qualification or publication. The npm and
 marketplace commands below select their published versions; they do not select this preview.
 Each AO worker needs the same complete source pin and a checked installation. The agreed scope stays
