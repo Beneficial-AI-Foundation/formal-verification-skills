@@ -1801,6 +1801,11 @@ describe('spec phase: record-spec and spec-status', () => {
     write([Object.fromEntries(Object.entries(accepted).reverse())]);
     receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...relied, ...bindings('gap-one') });
     assert.equal(auto.readState({ projectRoot: root }).phase, 'done', 'the same record in another key order still holds, and a binding to it has its digest');
+    // An axiom whose accepted record is tied to no frozen proposition is bound with `proposition: null`; the acceptance reads the record.
+    const untied = bindings('gap-one');
+    untied.integrity.semantic.bindings[0].proposition = null;
+    receipt({ accepted: true, label: 'accepted (build check)', specBase: head, ...relied, ...untied });
+    assert.equal(auto.readState({ projectRoot: root }).phase, 'done', 'a binding with no proposition still counts through its record');
     write([{ ...accepted, status: 'open', decision: null }]);
     stale('a bound record revoked after the check', { ...relied, ...bindings('gap-one') }, /does not count: the externals record gap-one it relied on changed after the check/);
     write([Object.fromEntries(Object.entries(accepted).reverse())]);
