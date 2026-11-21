@@ -272,7 +272,6 @@ Add `--format json` for the same result with the raw evidence. The items are:
 | Item | What it checks |
 |---|---|
 | `host` | Whether this host's target has a recorded confined run. It is never green, because the evidence covers one operation. |
-| `ao` | The Agent Orchestrator CLI. |
 | `rust` | The Rust toolchain and its host target. |
 | `lean` | The Lean project files and Lake. |
 | `aeneas` | The Aeneas pin, the installed Aeneas and Charon, and how they compare with the tested tuples. |
@@ -290,7 +289,7 @@ lines" below explains them.
 | `supported-and-tested` | An exact tested tuple on this host, for the recorded operation only, with probe-aeneas and every helper at the tested version. The profile names the operation, tuple and platform it covers. |
 | `available-but-unverified` | Present, but no recorded FVS run covers it. The reason says exactly why. This is not a failure. A reason that starts with `warning:` (pins that contradict each other, or a Charon or Lean that contradicts a tested Aeneas revision) is also this verdict and never stops setup. |
 | `incompatible` | A concrete mismatch. Only the `probe` item prints it, and it never stops setup. Either `translation.json` records an Aeneas revision that was tested with a different Charon or Lean, or the project is on a tested tuple and probe-aeneas or one of its helpers is at a different version than the tested one, or this host cannot confine the run. Being absent from the tested list is never enough. |
-| `missing` | A component is actually absent. For `ao`, `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
+| `missing` | A component is actually absent. For `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
 | `unsupported-platform` | This host's target has no recorded confined run, or no official probe-aeneas asset. Setup and extraction go on here. "Probes and stage lines" below says what the stages then need. |
 | `not-extracted-yet` | The expected state of a fresh project: no `translation.json` and no Aeneas-generated Lean file yet. This is not a failure. |
 
@@ -299,7 +298,6 @@ or a second sentence, the cell shows it:
 
 | Situation | Item | Next step |
 |---|---|---|
-| `ao` is not on PATH | `ao` | Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile. |
 | `cargo` or `rustc` is not on PATH | `rust` | Install Rust with rustup (https://rustup.rs), then rerun the profile. |
 | The Rust version could not be checked on this host | `rust` | Run rustc -vV in the crate directory yourself to confirm the toolchain. |
 | `lean-toolchain` is missing or empty | `lean` | Add a lean-toolchain file to the project root pinning the Lean version your Aeneas backend uses. |

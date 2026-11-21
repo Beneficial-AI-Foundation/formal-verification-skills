@@ -39,7 +39,6 @@ const VERSION_CHECKS = {
 // Next steps the profile prints verbatim whatever the host or project. The
 // ones that name a revision, platform or path are described, not quoted.
 const STATIC_NEXT_STEPS = [
-  'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.',
   'Install Rust with rustup (https://rustup.rs), then rerun the profile.',
   'Run rustc -vV in the crate directory yourself to confirm the toolchain.',
   'Add a lean-toolchain file to the project root pinning the Lean version your Aeneas backend uses.',
@@ -125,7 +124,7 @@ before(async () => {
 describe('auto-setup reference: profile vocabulary', () => {
   it('documents every profile item', () => {
     const { items } = JSON.parse(profileText(path.join(FIXTURES, 'fresh'), 'json'));
-    assert.ok(items.length >= 6);
+    assert.ok(items.length >= 5);
     for (const { id } of items) assert.ok(raw.includes(`| \`${id}\` |`), `item ${id}`);
   });
 
