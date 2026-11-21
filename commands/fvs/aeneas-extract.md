@@ -84,7 +84,7 @@ different models: if they resolve to the same one, stop and ask for a different 
 child dispatch can set the model runs as a child of this session. A seat on another runtime, or on a
 runtime that cannot set a per-child model, runs through an external runner: that runtime's own
 authenticated command-line client (Claude Code CLI or Codex CLI, as `model-profiles.md` routes
-reviews) or an Agent Orchestrator worker session started with the seat's model, with the same
+reviews) or a worker session of your development environment started with the seat's model, with the same
 inlined brief; the review record keeps the runner, model and effort the run reports, never the
 requested values. So a saved Claude writer with a Codex reviewer, or the reverse, works as the
 default. Show a seat as unresolved, and ask for a replacement that differs from the other seat, only

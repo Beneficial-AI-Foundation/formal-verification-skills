@@ -238,7 +238,7 @@ assigned worker using existing ownership fields/notes; re-read after mutation be
   for unattended booking; without it, recommend reservation instead of claiming exclusive ownership.
 - **GitHub:** require actual metadata permission and established assignee/state/label mapping. Add
   only the authorized assignment/status correction, never replace whole label/assignee sets, remove
-  another owner or create labels. A shared GitHub account is not an AO-session reservation. Ordinary
+  another owner or create labels. A shared GitHub account is not a worker-session reservation. Ordinary
   read-then-assign is NOT an atomic/exclusive claim; use existing coordinator serialization or report
   the limitation before duplicate implementation. Verify the result, not just request exit status.
 - **Other/missing capability:** return the proposed correction/claim and limitation; no guessed API.
