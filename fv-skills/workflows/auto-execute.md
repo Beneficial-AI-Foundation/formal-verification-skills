@@ -139,7 +139,9 @@ node "$AUTO" record-scope --project-root . --release DIR
 node "$AUTO" record-scope --project-root . --release DIR --confirm
 ```
 
-The first call only reports what it found and writes nothing. Run the second only after the owner agrees. If
+The first call only reports what it found and writes nothing. Run the second only after the owner agrees.
+Settling rewrites the state file, so a build check that already ran over the earlier state does not count for
+the settled one and runs again: settle the scope before that run. If
 the workspace holds several library crates, or the scan cannot tell, the command refuses and says so: a
 multi-crate extraction is needed. A run of several crates that loses a crate's row or the crate list is not
 read as a smaller run; the crates stay owed until they are extracted again. A build-check receipt counts for a crate
@@ -190,7 +192,9 @@ node "$AUTO" read-state --project-root .
 ```
 
 On `malformed-state` or `malformed-externals`, use `message` as the state and `nextStep` as the next
-action. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
+action. When only the recorded extraction cannot be read, the next step is to run `/fvs:auto-extract`
+again: it replaces that one record, changes nothing else, and keeps the state file as it was beside it as
+`state.json.<time>.bak`. On `no-state`, use `message` and `nextAction`, and stop: run `/fvs:auto-init` first. A missing
 or outdated agreement is a warning to carry into the report, not a stop.
 
 The result holds `fvs`, the folder of the installed FVS and its version. Put both in every worker's
