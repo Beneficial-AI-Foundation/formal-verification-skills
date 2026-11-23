@@ -1,5 +1,5 @@
 <purpose>
-For the AO orchestrator: turn the agreed scope into reviewed Lean statements, one draft pull request
+For the orchestrator session: turn the agreed scope into reviewed Lean statements, one draft pull request
 for the owner. The goal and the pipeline are fixed; how the agents get there is theirs to decide.
 Without the orchestrator, report the recorded state and stop without writes.
 </purpose>
@@ -33,10 +33,11 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    translation, the patches and the extraction and Lake configuration as the first commit on the branch,
    and never commit local state and caches (`.formalising/`, `.claude/`, `.lake/` and `.aeneas/`).
 
-   New worker worktrees start from the project's remote base branch, so a commit that exists only in
-   your local checkout never reaches an author or a reviewer. Push the working branch to the project's
-   own repository and make it the base new workers start from; with AO, set the project's default branch
-   to it once it exists on the remote. Push it with the FVS push command,
+   Many environments cut new worker worktrees from the project's remote base branch, so a commit that
+   exists only in your local checkout never reaches an author or a reviewer. Push the working branch to
+   the project's own repository and make it the base new workers start from, in whatever way your
+   environment sets the base of new worktrees (for example a project default branch, or a base-branch
+   option of the command that creates the worktree). Push it with the FVS push command,
    `node <FVS scripts folder>/fvs-auto-push.mjs --branch fvs/<name>`, and never with `git push`; the command pushes
    a branch under the namespace recorded at init and refuses a name outside it, so name the working branch under it. The spec and proof
    pull requests use it as their base unless the agreement says otherwise.
@@ -55,7 +56,9 @@ reviews and merges. The statements are what an auditor trusts, so they matter mo
    packages. Give each worktree its own copy of the primary checkout's Lake packages folder (a
    copy-on-write clone is fast where the filesystem supports it), or fall back to `lake exe cache get`
    and a dependency build; never share one packages folder between worktrees, because concurrent builds
-   would write the same package outputs. Authors have no recorded state in their worktrees, so only you
+   would write the same package outputs. If your environment does not let you write into a
+   worker's worktree, tell the worker to fetch its own packages with `lake exe cache get` and a
+   dependency build. Authors have no recorded state in their worktrees, so only you
    run the engine's steps, in the project checkout, after the authors' files are on the branch.
 
    Spawn one author first. Check that its worktree head is the working branch head and that a new spec
@@ -204,23 +207,24 @@ above and the build check; do not start the strict lane for any of them.
 
 No probe is needed for this pipeline, and a missing probe never stops it. Read the `auto-top-specs`
 stage line in the profile first (`auto-setup.md`, "Probes and stage lines", says what each line
-means). When `probe-lean` works, the strict lane stays available as an option: a verified dependency
+means). When `probe-lean` works, the strict lane stays available as an option (in 3.0.0-rc3 it drives an
+Agent Orchestrator controller and needs its `ao` CLI): a verified dependency
 graph, a closure plan from `fvs-closure-plan.mjs plan`, and the bounded transition protocol in
 `fv-skills/references/auto-transitions.md`. Prose agreement boundaries do not match axioms
 automatically, so the orchestrator translates them once into exact Lean names and passes them with
 `--allow-axioms`. A plan made without a dependency graph is degraded: it exits 9, computes no closure
 and is never admissible, so plan again with `--graph` once the probes are installed.
 
-## Step 1: Require Agent Orchestrator
+## Step 1: Locate the engine
 
 ```bash
 AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-top-specs." >&2
-  exit 1
-}
 ```
+
+This command runs in the orchestrator session: the agent session of your development environment that can
+start worker sessions, each in its own worktree, and message them (see `auto-seats.md`). FVS checks for no
+particular environment. A session that cannot start workers reports the recorded state and stops without
+writes.
 
 ## Step 2: Read the recorded state
 
@@ -254,7 +258,8 @@ node "$AUTO" record-spec --project-root . --spec-file PATH --items ID[,ID...] --
 `PATH` is the spec file and `FILE` is the reviewer's report saved as a file; both are existing files
 inside the project, named relative to its root. Reviewers write in their own worktrees, so copy each
 report into the project checkout yourself, under `.formalising/` for example: that folder is never
-committed, so the report stays out of the spec pull request. The IDs are the items' Rust paths without spaces, for
+committed, so the report stays out of the spec pull request. If your environment does not let you read a
+reviewer's worktree, have the reviewer return the report text in its final reply and save it yourself. The IDs are the items' Rust paths without spaces, for
 example `crate::module::function`, and `--out-of-scope` names the items an agent left out. The command
 stores a hash of both files. A later row for the same spec file is the current one, and a round past the
 third is recorded with a warning.

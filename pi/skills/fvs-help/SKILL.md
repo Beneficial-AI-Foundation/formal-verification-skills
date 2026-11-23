@@ -58,7 +58,7 @@ Crypto loop: /skill:fvs-crypto-plan → /skill:fvs-crypto-review → /skill:fvs-
 Six router commands group the skills. Invoke a router bare to print its routing table, or with a request to forward to the matched skill.
 
 - `/skill:fvs-aeneas` — Aeneas/Charon extraction maintenance (aeneas-extract, model-external, sync-aeneas-verif)
-- `/skill:fvs-auto` — Auto track with Agent Orchestrator (auto-init, auto-extract, auto-top-specs, auto-execute)
+- `/skill:fvs-auto` — Auto track in your agent development environment (auto-init, auto-extract, auto-top-specs, auto-execute)
 - `/skill:fvs-context` — Codebase context (map-code)
 - `/skill:fvs-fc` — Formal-correctness core (fc-plan, model-external, lean-specify, lean-spec-review, lean-verify, natural-language, lean-refactor, trust-audit)
 - `/skill:fvs-formalise` — Paper formalisation (lean-formalise, lean-refactor, protocol-prose, crypto loop)
@@ -114,7 +114,8 @@ Human re-specification after end/partial results is unsupported in 3.0.0-rc3. Ke
 whole-scope partial reasons; AUTO does not start revision effects or providers for that request.
 Initial specification/review/revise/prove and ordinary safe resume retain their existing gates.
 
-The FVS auto track, coordinated by Agent Orchestrator (requires the `ao` CLI). Every command reports
+The FVS auto track, coordinated by an orchestrator session of your development environment (any
+environment that starts workers in their own worktrees; FVS requires no particular one). Every command reports
 the recorded state, the next action and any pending decision. State lives in `.formalising/auto-fv/`
 and changes through the shipped FVS helpers. A pending or uncertain effect stops continuation; a
 rerun is not permission to repeat that effect.

@@ -30,7 +30,6 @@ project code.
 
 | Step | The low-risk instance | Why the run needs it |
 |---|---|---|
-| `worker-message` | `ao send --session fvs-permission-check-no-such-session --message "FVS permission check. Nothing to do."` (the session does not exist, so nothing is delivered) | The orchestrator sends instructions to workers. |
 | `author-edit` | one scratch file written under `.formalising/auto-fv/permission-check/` (git-excluded) | Authors write Lean files. |
 | `lake-build` | `lake env lean .formalising/auto-fv/permission-check/PermissionCheck.lean` (an import-free file; skipped while the project's dependencies are not in `.lake/packages`, because Lake would download them and create a manifest) | Authors and the orchestrator compile Lean files. |
 | `gh-read` | `gh pr list --repo OWNER/REPO --limit 1` and `gh pr view 1 --repo OWNER/REPO` | The orchestrator reads pull requests. |
@@ -50,6 +49,12 @@ the push command refuses such a destination.
 
 Creating or editing a pull request is not part of the check, and init writes no rule for either. Approve
 them yourself, or add your own rule if you want them to run unasked.
+
+The check covers what the run itself needs: file edits in the scratch folder, Lake, read-only `gh` and `git`,
+and the FVS push command. Commands of your development environment (starting, messaging and stopping workers)
+follow that environment's own permission settings; the closed catalog allows no wildcard program rule. In
+Agent Orchestrator, if `ao send` prompts in your orchestrator session, add `Bash(ao send *)` to the project
+settings yourself.
 
 Then you answer which steps prompted. If none did, nothing is written. If some did, init shows you the exact
 rules for those steps, and writes them only after your yes. It also records where pushes go, whichever steps
@@ -87,7 +92,6 @@ no deny rule, no ask rule, and no rule for a `git push`. This is the full set:
 {
   "permissions": {
     "allow": [
-      "Bash(ao send *)",
       "Edit(/.formalising/auto-fv/permission-check/**)",
       "Bash(lake env lean *)",
       "Bash(lake build *)",
@@ -103,7 +107,6 @@ no deny rule, no ask rule, and no rule for a `git push`. This is the full set:
 
 Why each rule:
 
-- `ao send *`: the orchestrator's messages to workers.
 - `Edit(/.formalising/auto-fv/permission-check/**)`: the scratch file of the check only. Edits in your spec and
   proof folders follow the session's permission mode; init writes no rule for them.
 - `lake env lean *` and `lake build *`: compiling Lean. Lake runs the project's own lakefile and downloads a
@@ -411,11 +414,6 @@ loads the rules. Whether a live Codex session stops prompting after this file is
 
 ```python
 prefix_rule(
-    pattern = ["ao", "send"],
-    decision = "allow",
-    justification = "Orchestrator messages to workers",
-)
-prefix_rule(
     pattern = ["gh", "pr", "view"],
     decision = "allow",
     justification = "Read a pull request",
@@ -530,8 +528,8 @@ instant between that last check and the replacement is not detected.
 - Delete the lines to undo the change. Nothing else is touched. If the settings file is not valid JSON, or its
   `permissions` section has an unexpected shape, the check stops and leaves it alone.
 
-Workers started by Agent Orchestrator run in the permission mode Agent Orchestrator gives them. The check
-covers the session that ran init. If your workers run in another mode, check that mode too.
+Workers run in the permission mode your development environment gives them. The check covers the session that
+ran init. If your workers run in another mode, check that mode too.
 
 ## What was tested
 
@@ -545,8 +543,8 @@ covers the session that ran init. If your workers run in another mode, check tha
 - The Codex rules were run through `codex execpolicy check` on codex-cli 0.166.0 and again on 0.170.0: the file parses, each probe
   command is allowed, and `git push`, merge and other commands are not matched. The tests repeat this when a Codex
   CLI is installed.
-- One live probe: the message step (`ao send` to a session that does not exist) was run in a Claude Code
-  session.
+- No live probe of a worker-message command is kept: commands of your development environment are outside this
+  check.
 - Not observed: a live Claude Code or Codex session showing that a written rule removes a prompt; the live `gh`,
   `git fetch` and Lake probes; a real push to GitHub through the push command; whether Claude Code screens a
   command substitution (`$(...)`) after the branch name against an allow rule, which its documentation does not say,
@@ -571,8 +569,8 @@ Work through these in order. Each is specific to a setup, so skip any that is no
    session started before the file existed may need a restart. Codex scans rules only when a session starts:
    open a new session, then ask init to recheck permissions (it runs `recheck`).
 2. **An ask rule matches.** An ask rule beats an allow rule. Wildcard ask rules, such as one for any command
-   containing `git merge`, match words anywhere in a command, including the text of an
-   `ao send` message or a pull request body, so a harmless message that mentions a merge can prompt. Say what
+   containing `git merge`, match words anywhere in a command, including the text of a message to a worker
+   or a pull request body, so a harmless message that mentions a merge can prompt. Say what
    should happen in plain words ("combine the branches"), or narrow the ask rule so that it starts with the
    command.
 3. **A hook asks.** A command hook before a tool call can ask even when a rule allows. A hook that guards

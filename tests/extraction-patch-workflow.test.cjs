@@ -269,7 +269,7 @@ describe('A new patch is written and reviewed by two different models', () => {
     const models = flatten(step('resolve_models'));
     assert.match(models, /Each seat records its runtime and its model \(and effort\)/);
     assert.match(models, /runs through an external runner: that runtime's own authenticated command-line client/);
-    assert.match(models, /or an Agent Orchestrator worker session started with the seat's model/);
+    assert.match(models, /or a worker session of your development environment started with the seat's model/);
     assert.match(models, /A saved pair of a Claude writer and a Codex reviewer, or the other way round, therefore works as the default/);
     assert.match(models, /never copy them from the request/i);
     const cmd = flatten(command);

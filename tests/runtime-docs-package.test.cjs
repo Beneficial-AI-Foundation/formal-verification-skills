@@ -202,9 +202,14 @@ if (process.argv.includes('--package-fixture')) {
     const setup = fs.readFileSync(path.join(ROOT, 'fv-skills/references/auto-setup.md'), 'utf8');
     const rc = setup.slice(setup.indexOf('## Rc3 exact-source installation'), setup.indexOf('## V2 run policy'));
     for (const token of ['FVS_SHA=', 'git -C "$FVS_SOURCE" rev-parse HEAD', '--claude --local',
-      'pi install "$FVS_SOURCE" --local', 'each AO worker worktree', 'existing Beads', '1.3.1', 'worker-readonly']) {
+      'pi install "$FVS_SOURCE" --local', 'each worker worktree', 'existing Beads', '1.3.1', 'worker-readonly']) {
       assert.ok(rc.includes(token), token);
     }
+    const flatRc = rc.replace(/\s+/g, ' ');
+    assert.match(flatRc, /Install FVS where the agents run/);
+    assert.match(flatRc, /in the sandbox's home with a global install, or in each worktree with a local one/);
+    assert.match(flatRc, /A worktree does not share an ignored local install/);
+    assert.match(flatRc, /FVS installs none of it and checks for none/);
     assert.match(rc, /installing FVS never runs `bd init`/);
     assert.match(rc, /local markdown issues/);
     assert.match(rc, /user-assisted Aeneas/);

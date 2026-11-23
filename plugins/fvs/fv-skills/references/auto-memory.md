@@ -50,7 +50,7 @@ local database lock; use the normal tool permission gate and report an actual de
 
 ## Fresh caller request for each start/resume
 
-The caller owns the current invocation and intended AO project/session/resume identity. Read these from
+The caller owns the current invocation and intended project, session and resume identity (any stable ids your environment gives you). Read these from
 its actual selected context; never invent them or obtain expectations from a worker result. Generate a
 fresh UUID even when the context/content is unchanged. `start` requires resumeId null; `resume` requires
 a nonempty current resume identity. A new attempt always has a new attemptId. These are workflow-bound

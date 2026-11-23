@@ -113,7 +113,7 @@ test('local paths/preimages and provider assignment limits are honest, not an at
   assert.match(section(4), /Re-read\/edit\/readback is NOT atomic/);
   assert.match(section(4), /single-writer coordinator\/claim mechanism/);
   assert.match(section(4), /never replace whole label\/assignee sets/);
-  assert.match(section(4), /shared GitHub account is not an AO-session reservation/);
+  assert.match(section(4), /shared GitHub account is not a worker-session reservation/);
   assert.match(section(4), /NOT an atomic\/exclusive claim/);
   assert.match(section(4), /Other\/missing capability.*no guessed API/);
 });

@@ -1,5 +1,5 @@
 <purpose>
-The AO orchestrator's single entry for the auto track: show the compatibility profile with every
+The orchestrator session's single entry for the auto track: show the compatibility profile with every
 stage's readiness up front, reuse a current applicable agreement, or settle only the missing scope,
 boundaries, conventions and execution choices with a short roadmap conversation, and record the
 agreement. A missing agreement is a warning, never a stop. The goal and the pipeline are fixed; how the
@@ -36,18 +36,14 @@ Agents may open draft pull requests and edit a pull request body. They never pos
 on GitHub, never mark a pull request ready and never merge: only the owner comments, marks ready and
 merges.
 
-## Step 1: Require Agent Orchestrator
+## Step 1: Locate the engine
 
 ```bash
 AUTO="$HOME/.claude/scripts/fvs-auto.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-init." >&2
-  exit 1
-}
 ```
 
-Stop when this fails. Agreement storage alone launches no workers.
+This command needs only an agent session in the project checkout; FVS checks for no particular
+development environment. Agreement storage alone launches no workers.
 
 ## Step 2: Inspect existing state and evidence before asking anything
 
@@ -128,8 +124,8 @@ Record only the missing owner choices, using the current applicable evidence for
   separately from any delegated execution actions and limits.
 
 New choices use `limits:{workers}`, `budget:{kind:"none"}` or an explicitly selected wall budget, and
-`memory:{mode:"disabled"|"beads"}`. Follow `auto-execution.md` for cancellation and small-proof progress
-diagnosis. There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata,
+`memory:{mode:"disabled"|"beads"}`. For cancellation, replacement and small-proof progress diagnosis,
+follow `auto-execution.md`, "Cancel or replace a worker on the default route". There is no arbitrary per-node proof timeout. Existing v1 `nodeHours` stays inactive metadata,
 not enforced; retain its original finite budget unchanged. Existing resource and spending limits are
 never raised or reset automatically. The initial owner agreement is the setup human gate. Later
 provisional specify/review/revise cycles are autonomous within it;
@@ -353,13 +349,14 @@ destination: to change the destination itself, the owner checks the file, delete
 init again.
 
 Otherwise ask the owner whether to run the check or skip it. A skip is recorded with every step as
-`unknown` (below) so that a resume does not ask again.
+`unknown` (below) so that a resume does not ask again. If this session runs with permission prompts off (for
+example skip-permissions inside a sandbox), say that the check is optional, because no step can stop and
+ask, and offer the skip. The push destination above is recorded either way.
 
 **Tell the owner first**, in these words or close to them: some of the next commands may stop and ask you
 to approve them; please approve each one when it appears, that is what the check is for. None of them posts
-to GitHub or pushes anything. They send a message to a session that does not exist, write one scratch file
-under `.formalising/`, compile it (only when the project's dependencies are already downloaded), read pull
-requests, fetch, and run the push command with a branch name that cannot exist, which it refuses before it
+to GitHub or pushes anything. They write one scratch file under `.formalising/`, compile it (only when the
+project's dependencies are already downloaded), read pull requests, fetch, and run the push command with a branch name that cannot exist, which it refuses before it
 contacts anything. Say also that "low-risk" is not "inert": Lake evaluates the project's own lakefile and can write
 build caches, and git runs any hook configured for a fetch.
 
@@ -372,8 +369,7 @@ plan has no probe (Lake would download a missing dependency): do not ask about i
 record it as `unknown`.
 
 **You cannot see prompts**, so ask. Two multi-select questions with at most four options each, each with a
-"none of these" option: first `worker-message`, `author-edit`, `lake-build`; then `gh-read`, `git-read`,
-`git-push`. The owner's answer is the result. Write it to a temporary file outside the project and record it:
+"none of these" option: first `author-edit`, `lake-build`; then `gh-read`, `git-read`, `git-push`. The owner's answer is the result. Write it to a temporary file outside the project and record it:
 
 ```bash
 node "$PERM" record --project-root . --repo "$DRAFT_REPO" --remote origin --branch-prefix fvs --input "$ANSWER"
@@ -405,7 +401,7 @@ If nothing prompted, say so and write nothing. If some steps prompted:
    they appear. Codex gets the same rule as a prefix rule for the program and `--branch`: say that it cannot
    tell `fvs/work` from `main`, and that the command refuses a name outside the namespace.
 2. Run `write-allowlist` without `--confirm` for the steps the owner agreed to, for example
-   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps worker-message,git-push`
+   `node "$PERM" write-allowlist --project-root . --repo "$DRAFT_REPO" --branch-prefix fvs --runtime claude --steps lake-build,git-push`
    (add `--host HOST` when the repository is not on `github.com`). It writes nothing and refuses with
    `confirmation-required`, printing the file, its real path (`resolvedPath`, `viaLink`), its `gitStatus` and
    where it applies (`appliesTo`), the exact rules, for `git-push` the push command and the recorded destination

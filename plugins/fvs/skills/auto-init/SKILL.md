@@ -97,7 +97,7 @@ Result parsing:
 </codex_skill_adapter>
 
 <objective>
-Start or resume the auto track through the AO orchestrator, the single entry. Show the compatibility
+Start or resume the auto track through the orchestrator session, the single entry. Show the compatibility
 profile with every stage's readiness up front, then reuse a current applicable agreement without
 Keep/Change or repeated interviewing. Use a short `/fvs:roadmap` light/deep/reuse conversation only
 for what is missing: the source revision, the agreed scope (crates, modules and features), boundaries,
@@ -173,7 +173,6 @@ Applicable existing explicit responses are reused without another question; comp
 </codex_skill_adapter>
 
 <success_criteria>
-- [ ] Stops with an actionable message when `ao` is not on PATH.
 - [ ] Malformed state stops with the script's message and next step; it is never overwritten.
 - [ ] The profile is shown with its stage lines before any question; a `profile-blocked` result stops with every blocking item's next step.
 - [ ] Owner choices are recorded only through `init-state`; an unchanged rerun writes nothing.

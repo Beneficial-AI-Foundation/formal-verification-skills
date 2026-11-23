@@ -9,18 +9,18 @@ not a proof.
 
 <process>
 
-## Step 1: Require Agent Orchestrator and recorded setup state
+## Step 1: Locate the engine and read the recorded setup state
 
 ```bash
 AUTO="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-auto.mjs"
 PATCH_ENGINE="${CLAUDE_PLUGIN_ROOT}/scripts/fvs-extract-patches.mjs"
-command -v ao >/dev/null 2>&1 || {
-  echo "FVS >> ERROR: the auto track requires the Agent Orchestrator ao CLI on PATH." >&2
-  echo "Install Agent Orchestrator and put its ao CLI on PATH (see auto-setup.md), then rerun /fvs:auto-extract." >&2
-  exit 1
-}
 node "$AUTO" read-state --project-root .
 ```
+
+This command needs an agent session in the project checkout; FVS checks for no particular development
+environment. The writer and reviewer seats of the extraction run as children of this session, or through
+another runtime's command-line client or a worker session of your environment (`aeneas-extract.md`, seat
+routing).
 
 Read the `code` field: `no-state` -> stop and point to `/fvs:auto-init`; `malformed-state` or
 `malformed-externals` -> print `message` and `nextStep` verbatim and stop, except when `nextStep` says to

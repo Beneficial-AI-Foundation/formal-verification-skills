@@ -39,7 +39,6 @@ const VERSION_CHECKS = {
 // Next steps the profile prints verbatim whatever the host or project. The
 // ones that name a revision, platform or path are described, not quoted.
 const STATIC_NEXT_STEPS = [
-  'Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile.',
   'Install Rust with rustup (https://rustup.rs), then rerun the profile.',
   'Run rustc -vV in the crate directory yourself to confirm the toolchain.',
   'Add a lean-toolchain file to the project root pinning the Lean version your Aeneas backend uses.',
@@ -125,7 +124,7 @@ before(async () => {
 describe('auto-setup reference: profile vocabulary', () => {
   it('documents every profile item', () => {
     const { items } = JSON.parse(profileText(path.join(FIXTURES, 'fresh'), 'json'));
-    assert.ok(items.length >= 6);
+    assert.ok(items.length >= 5);
     for (const { id } of items) assert.ok(raw.includes(`| \`${id}\` |`), `item ${id}`);
   });
 
@@ -154,7 +153,7 @@ describe('auto-setup reference: prerequisites', () => {
     const named = Object.keys(VERSION_CHECKS)
       .filter((tool) => new RegExp(`(?<![\\w-])${tool}(?![\\w-])`, 'i').test(text));
     // The profile text must exercise the whole fresh-host path, not a corner.
-    for (const tool of ['ao', 'rustup', 'cargo', 'rustc', 'elan', 'lake', 'aeneas', 'charon', 'probe-aeneas']) {
+    for (const tool of ['rustup', 'cargo', 'rustc', 'elan', 'lake', 'aeneas', 'charon', 'probe-aeneas']) {
       assert.ok(named.includes(tool), `failure messages no longer name ${tool}`);
     }
     for (const tool of named) assert.ok(raw.includes(`\`${VERSION_CHECKS[tool]}\``), `${tool}: ${VERSION_CHECKS[tool]}`);
@@ -326,7 +325,7 @@ describe('auto-setup reference: tested matrix', () => {
 
   it('keeps whole-guide support wording bound to the recorded verdict names', () => {
     assertBoundedVerdictWording(raw);
-    assert.match(doc, /Neither an installed version line nor unit fixtures establish full AO\/Lean factory or cloud support/);
+    assert.match(doc, /Neither an installed version line nor unit fixtures establish full orchestrator\/Lean factory or cloud support/);
     for (const heading of ['Rc3 exact-source installation', 'Tested matrix']) {
       const blanket = raw.replace(`## ${heading}`, `## ${heading}\n\nFVS is supported on every host.`);
       assert.throws(() => assertBoundedVerdictWording(blanket), /not match/);
@@ -371,7 +370,8 @@ describe('auto-setup reference: running under Agent Orchestrator and Codex', () 
     const byTitle = (pattern) => optional.find((b) => pattern.test(b));
     const wildcard = flat(byTitle(/Describe commands in words/));
     assert.match(wildcard, /This applies only if you wrote a permission rule that asks before any command starting with a wildcard/);
-    assert.match(wildcard, /call `ao` itself directly, not through a wrapper/);
+    assert.match(wildcard, /call your environment's command itself directly, not through a wrapper/);
+    assert.match(wildcard, /such as the message you send to a worker/);
     const api = flat(byTitle(/Read pull requests without `gh api`/));
     assert.match(api, /This applies only if your permission rules or your project's own rules block `gh api`/);
     assert.match(api, /`gh pr view` and `gh pr diff`/);
@@ -485,20 +485,21 @@ describe('auto-setup reference: probe statuses and stage lines', () => {
     assert.doesNotMatch(row, /unblock/i);
   });
 
-  it('says a stage runs reduced when only probes are lost, and has no route only without ao, lean or a recorded probe check', () => {
+  it('says a stage runs reduced when only probes are lost, and has no route only without lean or a recorded probe check', () => {
     const own = flat(section(raw, 'Probes and stage lines'));
-    assert.match(own, /each need `ao` and `lean` to have a route at all/);
+    assert.match(own, /each need `lean` to have a route at all/);
+    assert.match(own, /The profile checks no development environment: which one starts the workers is your choice/);
     assert.match(own, /A lost probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced/);
     assert.match(own, /So reduced output never promises proof acceptance, and without `probe-lean` the strict lane refuses acceptance until it is usable/);
     assert.match(own, /The build check that `\/fvs:auto-execute` runs in a fresh clean copy needs none of the probes/);
     assert.doesNotMatch(own, /all five probes|has no route here until/);
     const reduced = rowFor('Probes and stage lines', 'ready, reduced');
-    assert.match(reduced, /`ao` and `lean` are present, and only probes are missing, not checked or unusable/);
+    assert.match(reduced, /`lean` is present, and only probes are missing, not checked or unusable/);
     assert.match(reduced, /The line names each lost probe and what that costs, says reduced output never promises proof acceptance/);
     assert.match(reduced, /`To restore, the owner can \.\.\.` and `\(warning, not a stop\)`/);
     assert.doesNotMatch(reduced, /agent can/);
     const noRoute = rowFor('Probes and stage lines', 'no route here');
-    assert.match(noRoute, /`ao` or `lean` is missing, or the recorded profile has no usable status for a probe/);
+    assert.match(noRoute, /`lean` is missing, or the recorded profile has no usable status for a probe/);
     assert.doesNotMatch(noRoute, /a probe is missing/);
     assert.match(own, /repeats a `ready, unverified` or `ready, reduced` line as a warning/);
   });

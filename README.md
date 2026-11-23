@@ -14,8 +14,9 @@ directly from papers. You choose the targets, review the statements and decide w
 Use a reviewed full commit SHA and the [rc3 setup checklist](fv-skills/references/auto-setup.md#rc3-exact-source-installation)
 for SWVF. The version label alone does not establish qualification or publication. The npm and
 marketplace commands below select their published versions; they do not select this preview.
-Each AO worker needs the same complete source pin and a checked installation. The agreed scope stays
-explicit. The optional strict lane also needs an execution grant. Project memory is optional and uses
+Each worker needs the same complete source pin and a checked installation. The agreed scope stays
+explicit. The optional strict lane also needs an execution grant. In 3.0.0-rc3 it also drives an Agent
+Orchestrator controller and needs its `ao` CLI. Project memory is optional and uses
 one existing primary Beads store; it is separate from the local issue tracker.
 
 ## Getting started
@@ -194,7 +195,9 @@ Initial cycles and safe resume keep their gates; feedback starts no revision wor
 /fvs:auto-init → /fvs:auto-extract → /fvs:auto-top-specs → /fvs:auto-execute
 ```
 
-The auto track uses stock Agent Orchestrator and needs its `ao` CLI. `/fvs:auto-init` checks the
+The auto track runs in any agent development environment that starts workers in their own git worktrees
+and lets the orchestrator message them, for example Agent Orchestrator or Orca. FVS names no required
+one. `/fvs:auto-init` checks the
 project and records the scope and the agreement. After extraction, an author writes a Lean statement
 for every public API item in that scope, one file per Rust file, and a fresh adversarial reviewer
 checks it. The spec pull request opens as a draft; you review, prune, mark it ready and merge it.

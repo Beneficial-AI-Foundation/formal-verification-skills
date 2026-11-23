@@ -12,7 +12,7 @@ description: Prove the merged spec statements, let FVS's build check decide acce
 </pi_package_runtime>
 
 <objective>
-For the AO orchestrator, once the owner has merged the spec pull request: workers prove the statements,
+For the orchestrator session, once the owner has merged the spec pull request: workers prove the statements,
 one proof file per Rust item (complete first, improve later). FVS's build check, run in a fresh clean
 copy, decides what is accepted. The proof pull request follows as a draft on the project's own
 repository, and spec refactors found while proving arrive as new draft pull requests. The goal and the

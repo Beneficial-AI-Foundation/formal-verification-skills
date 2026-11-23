@@ -75,7 +75,7 @@ the reviewer) only for the dispatches in Step 4a; every other dispatch keeps its
   this session (the `Task` calls of Step 4a). A seat on another runtime, or on a runtime whose child
   dispatch cannot set a per-child model, runs through an external runner: that runtime's own
   authenticated command-line client (for example Claude Code CLI or Codex CLI, as `model-profiles.md`
-  routes reviews), or an Agent Orchestrator worker session started with the seat's model. The
+  routes reviews), or a worker session of your development environment started with the seat's model. The
   brief is the same as the child's: the prompt inlines everything, the writer returns the staged
   patch file, and the reviewer returns the review record that ends in the `Reviewer verdict:` line.
   Record the runner, model and effort the run reports in the review record; never copy them from the

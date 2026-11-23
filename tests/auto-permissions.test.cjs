@@ -20,6 +20,8 @@ const PAGE = path.join(ROOT, 'fv-skills', 'references', 'auto-permissions.md');
 const REPO = 'Acme/proj';
 const PROGRAM = `node ${PUSH_SCRIPT}`;
 const RULE = `Bash(${PROGRAM} --branch fvs/*)`;
+// The one rule of the author-edit step: the simplest single-rule write for the tests that only need some step.
+const EDIT_RULE = 'Edit(/.formalising/auto-fv/permission-check/**)';
 // A stand-in for the scripts folder, so the catalog and the permissions page can be compared on any machine.
 const PLACEHOLDER_DIR = '/PATH/TO/FVS/scripts';
 // A rule spells out the absolute path of the push command, so the tests that write one need a checkout path it can spell.
@@ -157,7 +159,8 @@ describe('the catalog', () => {
       'Bash(git push *)', 'Bash(git push --force origin fvs/*)', 'Bash(git push origin main)', 'Bash(git push origin main*)', 'Bash(git push upstream fvs/*)',
       'Bash(git push origin */*)', 'Bash(git push -u upstream fvs/*)', 'Bash(git push origin release/*)', 'Bash(git push origin fvs/*)', 'Bash(git push -u origin fvs/*)',
       'Bash(git -C * push origin fvs/*)', 'Bash(git * push *)', 'Bash(git *)', 'Bash(gh *)', 'Bash(*)', 'Bash(rm *)',
-      'Bash(ao stop *)', 'Bash(ao pr merge *)', 'Edit(/.claude/**)', 'Edit(/.git/**)', 'Edit(/../**)', 'Edit(/**)', 'Read(/**)', 'WebFetch',
+      // Commands of a development environment are outside the closed catalog, the worker-message command included.
+      'Bash(ao send *)', 'Bash(ao stop *)', 'Bash(ao pr merge *)', 'Edit(/.claude/**)', 'Edit(/.git/**)', 'Edit(/../**)', 'Edit(/**)', 'Read(/**)', 'WebFetch',
       // Not rules FVS writes: the spec and proof folders, and draft pull request create and edit, are left to the user.
       'Edit(/formal/**)', 'Bash(gh pr edit *)', `Bash(gh pr create --draft --repo ${REPO} *)`,
     ]) assert.ok(lib.ruleProblem('allow', rule), `should refuse ${rule}`);
@@ -198,11 +201,107 @@ describe('the catalog', () => {
   });
 });
 
+// The closed catalog is the only source of probes and rules, so a development environment's command must not
+// reach it in any step: every program is one of the permitted ones, whatever the step is called.
+describe('whole catalog uses only the permitted programs', () => {
+  const PERMITTED = new Set(['lake', 'git', 'gh']);
+  const SCRATCH_RULE = /^Edit\(\/\.formalising\/auto-fv\/permission-check\/\*\*\)$/;
+  const fvsScript = (dir) => new RegExp(`^${dir.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/fvs-[a-z-]+\\.mjs$`);
+  // A program of the permitted set, or `node` running one FVS script of the scripts folder.
+  const permittedWords = (words, dir = PLACEHOLDER_DIR) => PERMITTED.has(words[0]) || (words[0] === 'node' && fvsScript(dir).test(words[1] || ''));
+  const wordsOfRule = (rule) => {
+    const bash = /^Bash\((.*)\)$/.exec(rule);
+    return bash ? bash[1].split(' ') : null;
+  };
+  // An environment CLI or the memory CLI is a word of its own. The branch pattern and the scripts folder are
+  // not checked for it: the owner chooses the branch namespace, and the checkout path can hold such a word.
+  const ENVIRONMENT_WORD = /(^|[^A-Za-z0-9_-])(ao|orca|bd)(?![A-Za-z0-9_-])/;
+  const withoutChosenParts = (text, dir) => text.split(dir).join('').replace(/--branch \S+/g, '--branch');
+
+  function checkCommand(command, where, dir = PLACEHOLDER_DIR) {
+    assert.ok(permittedWords(command.split(' '), dir), `${where}: ${command} runs a program outside the permitted set`);
+    assert.doesNotMatch(withoutChosenParts(command, dir), ENVIRONMENT_WORD, where);
+  }
+
+  function checkClaudeRule(rule, where, dir = PLACEHOLDER_DIR) {
+    const words = wordsOfRule(rule);
+    if (words) checkCommand(words.join(' '), where, dir);
+    else assert.match(rule, SCRATCH_RULE, `${where}: ${rule} is neither a permitted command nor the scratch edit rule`);
+  }
+
+  function checkCodexRule(rule, where, dir = PLACEHOLDER_DIR) {
+    assert.ok(permittedWords(rule.pattern, dir), `${where}: ${rule.pattern.join(' ')} runs a program outside the permitted set`);
+    assert.doesNotMatch(withoutChosenParts(JSON.stringify({ ...rule, pattern: rule.pattern.slice(0, 1) }), dir), ENVIRONMENT_WORD, where);
+    for (const example of [...(rule.match || []), ...(rule.notMatch || [])]) {
+      assert.ok(permittedWords(example.split(' '), dir), `${where}: example ${example}`);
+    }
+  }
+
+  it('holds for every probe, every Claude rule and every Codex rule of every step, in each prefix setting', () => {
+    // A branch namespace named after an environment is the owner's choice and is never a program.
+    for (const prefixes of [['fvs'], ['fvs', 'team/runs'], ['ao', 'orca']]) {
+      const catalog = lib.buildCatalog({ repo: REPO, prefixes, scriptsDir: PLACEHOLDER_DIR });
+      assert.ok(catalog.steps.length >= 5, 'the catalog was read');
+      for (const step of catalog.steps) {
+        const where = `${step.id} (${prefixes.join(',')})`;
+        for (const probe of step.probes) {
+          if (probe.tool === 'Bash') checkCommand(probe.command, `${where} probe`);
+          else {
+            assert.equal(probe.tool, 'Write', `${where} probe tool`);
+            assert.ok(probe.path.startsWith('.formalising/auto-fv/permission-check/'), `${where} probe path ${probe.path}`);
+            assert.doesNotMatch(probe.content, ENVIRONMENT_WORD, `${where} probe content`);
+          }
+        }
+        for (const rule of step.claude) checkClaudeRule(rule, `${where} claude`);
+        for (const rule of step.codex) checkCodexRule(rule, `${where} codex`);
+      }
+    }
+  });
+
+  it('can fail: an environment command in a probe, a Claude rule or a Codex rule is caught', () => {
+    for (const attempt of [
+      () => checkCommand('ao send --session x --message hi', 'control'),
+      () => checkCommand('git fetch origin && ao send x', 'control'),
+      () => checkClaudeRule('Bash(orca orchestration send *)', 'control'),
+      () => checkClaudeRule('Bash(bd remember *)', 'control'),
+      () => checkClaudeRule('Edit(/.claude/**)', 'control'),
+      () => checkCodexRule({ pattern: ['ao', 'send'] }, 'control'),
+      () => checkCodexRule({ pattern: ['gh', 'pr', 'view'], match: ['orca worktree ps'] }, 'control'),
+    ]) assert.throws(attempt, assert.AssertionError);
+    checkCommand('gh pr view 1 --repo Acme/proj', 'control');
+    checkClaudeRule('Bash(git fetch *)', 'control');
+    checkCodexRule({ pattern: ['git', 'ls-remote'], match: ['git ls-remote --heads origin'] }, 'control');
+  });
+
+  it('holds for the rules that the write step actually generates, Claude settings and Codex rules file', { skip: pushSkip }, () => {
+    const steps = 'author-edit,lake-build,gh-read,git-read,git-push';
+    const preview = run('write-destination', base());
+    assert.equal(preview.json.code, 'confirmation-required');
+    assert.equal(run('write-destination', base('--confirm', preview.json.digest)).json.code, 'written');
+    const claude = run('write-allowlist', base('--runtime', 'claude', '--steps', steps));
+    assert.equal(claude.json.code, 'confirmation-required');
+    assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', steps, '--confirm', claude.json.digest)).json.code, 'written');
+    const allowed = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8')).permissions.allow;
+    assert.ok(allowed.length >= 6, 'the Claude rules were read');
+    // The generated rules spell the real scripts folder of this checkout.
+    const dir = path.dirname(PUSH_SCRIPT);
+    for (const rule of allowed) checkClaudeRule(rule, `written Claude rule ${rule}`, dir);
+    const codex = run('write-allowlist', base('--runtime', 'codex', '--steps', steps));
+    assert.equal(codex.json.code, 'confirmation-required');
+    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', steps, '--confirm', codex.json.digest)).json.code, 'written');
+    const text = fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8');
+    const patterns = [...text.matchAll(/pattern\s*=\s*(\[[^\]]*\])/g)].map((match) => JSON.parse(match[1]));
+    assert.ok(patterns.length >= 4, 'the Codex rules were read');
+    for (const pattern of patterns) checkCodexRule({ pattern }, `written Codex rule ${pattern.join(' ')}`, dir);
+    assert.doesNotMatch(withoutChosenParts(text, dir), ENVIRONMENT_WORD, 'the Codex rules file names no development environment');
+  });
+});
+
 describe('plan', () => {
   it('lists the probes and refuses a remote that is not the project repository', () => {
     const ok = run('plan', base());
     assert.equal(ok.status, 0);
-    assert.deepEqual(ok.json.steps.map((s) => s.id), ['worker-message', 'author-edit', 'lake-build', 'gh-read', 'git-read', 'git-push']);
+    assert.deepEqual(ok.json.steps.map((s) => s.id), ['author-edit', 'lake-build', 'gh-read', 'git-read', 'git-push']);
     assert.equal(ok.json.record.present, false);
     assert.equal(ok.json.pushCommand, `${PROGRAM} --branch fvs/<name>`);
     assert.equal(ok.json.pushDestination.status, 'missing');
@@ -265,7 +364,7 @@ describe('the remote check', () => {
     const refused = plan();
     assert.equal(refused.code, 'remote-mismatch');
     assert.match(refused.message, /push URL git@github\.com:Upstream\/proj\.git/);
-    assert.equal(allow('worker-message').json.code, 'remote-mismatch');
+    assert.equal(allow('author-edit').json.code, 'remote-mismatch');
     const file = path.join(project, 'answer.json');
     fs.writeFileSync(file, JSON.stringify({ runtime: 'claude', kind: 'check', results: { 'git-push': 'quiet' } }));
     assert.equal(run('record', base('--input', file)).json.code, 'remote-mismatch');
@@ -370,7 +469,7 @@ describe('write-allowlist for Claude Code', () => {
 
   it('a digest confirmed for one rule set is refused for another', () => {
     const preview = allow('gh-read');
-    const other = allow('worker-message', '--confirm', preview.json.digest);
+    const other = allow('author-edit', '--confirm', preview.json.digest);
     assert.equal(other.json.code, 'confirmation-required');
     assert.equal(fs.existsSync(settingsFile()), false);
   });
@@ -384,14 +483,14 @@ describe('write-allowlist for Claude Code', () => {
       env: { A: '1' },
     };
     writeSettings(original);
-    const done = confirmed('worker-message,gh-read');
+    const done = confirmed('author-edit,gh-read');
     assert.equal(done.json.code, 'written');
     const after = readSettings();
     assert.deepEqual(Object.keys(after), Object.keys(original));
     for (const key of ['$schema', 'model', 'hooks', 'env']) assert.deepEqual(after[key], original[key]);
     assert.deepEqual(after.permissions.ask, original.permissions.ask);
     assert.equal(after.permissions.defaultMode, 'default');
-    assert.deepEqual(after.permissions.allow, [...original.permissions.allow, 'Bash(ao send *)', 'Bash(gh pr view *)', 'Bash(gh pr list *)']);
+    assert.deepEqual(after.permissions.allow, [...original.permissions.allow, EDIT_RULE, 'Bash(gh pr view *)', 'Bash(gh pr list *)']);
     assert.equal(after.permissions.deny, undefined, 'FVS writes no deny rules');
     assert.ok(fs.readFileSync(settingsFile(), 'utf8').endsWith('}\n'));
   });
@@ -422,7 +521,7 @@ describe('the helper\'s own git calls', () => {
     assert.equal(gitIn(project, 'worktree', 'add', '-q', '-b', 'linked', worktree).status, 0);
     return fs.realpathSync(worktree);
   };
-  const local = (root, env) => run('write-allowlist', ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', '--target', 'local'], env);
+  const local = (root, env) => run('write-allowlist', ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'author-edit', '--target', 'local'], env);
   const otherRepository = () => {
     const other = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-other-'));
     assert.equal(gitIn(other, 'init', '-q').status, 0);
@@ -456,7 +555,7 @@ describe('the helper\'s own git calls', () => {
     const inherited = { ...process.env, GIT_DIR: path.join(other, '.git') };
     const plain = spawnSync('git', ['-C', project, 'check-ignore', '-q', '.claude/settings.json'], { env: withGitHome(inherited) });
     assert.equal(plain.status, 0, 'the row bites: with GIT_DIR set, plain git reads the other repository\'s exclude file');
-    const preview = run('write-allowlist', base('--runtime', 'claude', '--steps', 'worker-message'), inherited);
+    const preview = run('write-allowlist', base('--runtime', 'claude', '--steps', 'author-edit'), inherited);
     assert.equal(preview.json.code, 'confirmation-required', JSON.stringify(preview.json));
     assert.equal(preview.json.gitStatus, 'untracked-not-ignored');
     fs.rmSync(other, { recursive: true, force: true });
@@ -801,7 +900,7 @@ describe('the recorded destination', () => {
     }
     assert.equal(fs.existsSync(path.join(project, '.claude')), false);
     assert.equal(fs.existsSync(path.join(project, '.codex')), false);
-    assert.equal(allow('worker-message').json.code, 'confirmation-required', 'other steps do not need it');
+    assert.equal(allow('author-edit').json.code, 'confirmation-required', 'other steps do not need it');
     recordDestination();
     assert.equal(allow('git-push').json.code, 'confirmation-required');
     spawnSync('git', ['-C', project, 'remote', 'set-url', 'origin', `https://github.com/${REPO}.git`]);
@@ -872,7 +971,7 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
     assert.deepEqual(lib.legacyPushRules(fs.realpathSync(project)), []);
     assert.equal(run('plan', base()).json.legacyPushRules, undefined);
     assert.equal(allow('git-push').json.code, 'unchanged', 'a second write is not refused by the rule it wrote');
-    assert.equal(confirmed('worker-message').json.code, 'written');
+    assert.equal(confirmed('author-edit').json.code, 'written');
   });
 
   it('is still refused while a git push allow rule is there', () => {
@@ -881,9 +980,9 @@ describe('the push command rule for Claude Code', { skip: pushSkip }, () => {
   });
 
   it('next to other steps it adds those steps\' rules too', () => {
-    const done = confirmed('git-push,worker-message');
+    const done = confirmed('git-push,author-edit');
     assert.equal(done.json.code, 'written');
-    assert.deepEqual(readSettings().permissions.allow, [RULE, 'Bash(ao send *)']);
+    assert.deepEqual(readSettings().permissions.allow, [RULE, EDIT_RULE]);
   });
 
   it('appends the rule and keeps every other key, rule, hook and the key order', () => {
@@ -951,7 +1050,7 @@ describe('write-allowlist for Claude Code: files and targets', () => {
   it('refuses a file that is not valid JSON, or has the wrong shape, and leaves it untouched', () => {
     for (const text of ['{ "permissions": { "allow": [ ', '[]', '{ "permissions": { "allow": "Bash(ls)" } }', '{ "permissions": [] }', '// comment\n{}']) {
       writeSettings(text);
-      const preview = allow('worker-message');
+      const preview = allow('author-edit');
       assert.equal(preview.json.code, 'malformed-settings', text);
       assert.equal(fs.readFileSync(settingsFile(), 'utf8'), text);
     }
@@ -959,7 +1058,7 @@ describe('write-allowlist for Claude Code: files and targets', () => {
 
   it('refuses unknown steps and forbidden inputs', () => {
     assert.equal(allow('gh-comment').json.code, 'unknown-step');
-    assert.equal(allow('worker-message', '--branch-prefix', 'main').json.code, 'invalid-input');
+    assert.equal(allow('author-edit', '--branch-prefix', 'main').json.code, 'invalid-input');
     for (const dropped of ['edit-folders', 'draft-pr-create', 'draft-pr-edit']) assert.equal(allow(dropped).json.code, 'unknown-step', dropped);
     assert.equal(run('plan', base('--edit-dir', 'formal')).json.code, 'usage');
     assert.equal(run('write-allowlist', base('--runtime', 'claude', '--steps', '')).json.code, 'invalid-input');
@@ -968,14 +1067,14 @@ describe('write-allowlist for Claude Code: files and targets', () => {
   });
 
   it('shows the resolved target, its git status and where it applies before anything is confirmed', () => {
-    const shared = allow('worker-message').json;
+    const shared = allow('author-edit').json;
     assert.equal(shared.target, 'shared');
     assert.equal(shared.file, '.claude/settings.json');
     assert.equal(shared.resolvedPath, path.join(fs.realpathSync(project), '.claude', 'settings.json'));
     assert.equal(shared.viaLink, false);
     assert.equal(shared.gitStatus, 'untracked-not-ignored');
     assert.match(shared.appliesTo, /once the folder is trusted.*worker worktree sees it only if the file is committed or \.claude is linked/);
-    const local = allow('worker-message', '--target', 'local').json;
+    const local = allow('author-edit', '--target', 'local').json;
     assert.equal(local.target, 'local');
     assert.equal(local.file, '.claude/settings.local.json');
     assert.match(local.appliesTo, /main checkout in every worktree.*without the trust step/);
@@ -986,16 +1085,16 @@ describe('write-allowlist for Claude Code: files and targets', () => {
   it('writes through a linked .claude folder and says where the file really is', () => {
     const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-perm-shared-'));
     fs.symlinkSync(shared, path.join(project, '.claude'));
-    const linkedPreview = allow('worker-message').json;
+    const linkedPreview = allow('author-edit').json;
     assert.equal(linkedPreview.viaLink, true);
     assert.equal(linkedPreview.resolvedPath, path.join(fs.realpathSync(shared), 'settings.json'), 'the real path is shown before the write');
     // Git refuses a path beyond a symbolic link ("pathspec is beyond a symbolic link"), so it cannot say where the file stands.
     assert.equal(linkedPreview.gitStatus, 'unknown');
-    const done = confirmed('worker-message');
+    const done = confirmed('author-edit');
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.gitStatus, 'unknown');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(shared), 'settings.json'));
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(shared, 'settings.json'), 'utf8')).permissions.allow, ['Bash(ao send *)']);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(shared, 'settings.json'), 'utf8')).permissions.allow, [EDIT_RULE]);
   });
 
   it('refuses the local file from a linked worktree, where Claude Code would not read it', () => {
@@ -1003,7 +1102,7 @@ describe('write-allowlist for Claude Code: files and targets', () => {
     git('commit', '-q', '--allow-empty', '-m', 'init');
     const linked = path.join(os.tmpdir(), `fvs-perm-linked-${process.pid}-${Date.now()}`);
     git('worktree', 'add', '-q', linked, '-b', 'linked');
-    const args = ['--project-root', linked, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', '--target', 'local'];
+    const args = ['--project-root', linked, '--repo', REPO, '--runtime', 'claude', '--steps', 'author-edit', '--target', 'local'];
     const refused = run('write-allowlist', args);
     assert.equal(refused.json.code, 'local-needs-main-checkout');
     assert.equal(fs.existsSync(path.join(linked, '.claude')), false);
@@ -1012,10 +1111,10 @@ describe('write-allowlist for Claude Code: files and targets', () => {
   });
 
   it('reports whether the file is tracked, ignored or loose, and supports the local file', () => {
-    const loose = confirmed('worker-message');
+    const loose = confirmed('author-edit');
     assert.equal(loose.json.gitStatus, 'untracked-not-ignored');
     fs.writeFileSync(path.join(project, '.gitignore'), '.claude/settings.local.json\n');
-    const local = confirmed('worker-message', '--target', 'local');
+    const local = confirmed('author-edit', '--target', 'local');
     assert.equal(local.json.file, '.claude/settings.local.json');
     assert.equal(local.json.gitStatus, 'ignored');
     assert.equal(spawnSync('git', ['-C', project, 'add', '-f', '.claude/settings.json']).status, 0);
@@ -1032,10 +1131,10 @@ describe('record', () => {
   };
 
   it('keeps the answers, shows the waiting steps and tells the next plan not to rerun the check', () => {
-    const first = answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted', 'git-push': 'prompted', 'gh-read': 'quiet' } });
+    const first = answer({ runtime: 'claude', kind: 'check', results: { 'author-edit': 'prompted', 'git-push': 'prompted', 'gh-read': 'quiet' } });
     assert.equal(first.json.code, 'recorded');
-    assert.deepEqual(first.json.prompted, ['worker-message', 'git-push']);
-    assert.match(first.json.summary, /waiting for your approval when the run reaches: worker-message, git-push/);
+    assert.deepEqual(first.json.prompted, ['author-edit', 'git-push']);
+    assert.match(first.json.summary, /waiting for your approval when the run reaches: author-edit, git-push/);
     const plan = run('plan', base());
     assert.equal(plan.json.record.present, true);
     assert.match(plan.json.message, /do not run the check again/);
@@ -1044,25 +1143,25 @@ describe('record', () => {
   });
 
   it('keeps both rounds and the allowlist written in between', () => {
-    answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted' } });
-    confirmed('worker-message');
-    const second = answer({ runtime: 'claude', kind: 'recheck', results: { 'worker-message': 'quiet' } });
+    answer({ runtime: 'claude', kind: 'check', results: { 'author-edit': 'prompted' } });
+    confirmed('author-edit');
+    const second = answer({ runtime: 'claude', kind: 'recheck', results: { 'author-edit': 'quiet' } });
     assert.match(second.json.summary, /^recheck .*no step prompted.*allowlist written to \.claude\/settings\.json \(1 allow\)/);
     const written = JSON.parse(fs.readFileSync(path.join(project, '.formalising', 'auto-fv', 'permissions.json'), 'utf8'));
     assert.deepEqual(written.rounds.map((r) => r.kind), ['check', 'recheck']);
-    assert.deepEqual(written.allowlist.allow, ['Bash(ao send *)']);
+    assert.deepEqual(written.allowlist.allow, [EDIT_RULE]);
   });
 
   it('takes the latest answer per step across rounds, so a partial recheck keeps an unresolved prompt visible', () => {
-    answer({ runtime: 'codex', kind: 'check', results: { 'worker-message': 'prompted', 'git-push': 'prompted', 'gh-read': 'quiet' } });
-    const recheck = answer({ runtime: 'codex', kind: 'recheck', results: { 'worker-message': 'quiet' } });
-    assert.match(recheck.json.summary, /quiet: worker-message, gh-read/);
+    answer({ runtime: 'codex', kind: 'check', results: { 'author-edit': 'prompted', 'git-push': 'prompted', 'gh-read': 'quiet' } });
+    const recheck = answer({ runtime: 'codex', kind: 'recheck', results: { 'author-edit': 'quiet' } });
+    assert.match(recheck.json.summary, /quiet: author-edit, gh-read/);
     assert.match(recheck.json.summary, /prompted: git-push/);
     assert.match(recheck.json.summary, /waiting for your approval when the run reaches: git-push/);
     assert.doesNotMatch(recheck.json.summary, /no step prompted/);
     const view = run('plan', base()).json.record;
-    assert.deepEqual(view.latest, { 'worker-message': 'quiet', 'git-push': 'prompted', 'gh-read': 'quiet' });
-    assert.deepEqual(view.notAsked, ['author-edit', 'lake-build', 'git-read']);
+    assert.deepEqual(view.latest, { 'author-edit': 'quiet', 'git-push': 'prompted', 'gh-read': 'quiet' });
+    assert.deepEqual(view.notAsked, ['lake-build', 'git-read']);
     assert.equal(view.rounds.length, 2, 'the raw history is kept');
     const later = answer({ runtime: 'codex', kind: 'recheck', results: { 'git-push': 'quiet' } });
     assert.match(later.json.summary, /no step prompted in the latest answers/);
@@ -1070,23 +1169,35 @@ describe('record', () => {
 
   it('keeps unknown and not-yet-asked steps visible next to quiet ones, and does not call that a skip', () => {
     const mixed = answer({ runtime: 'claude', kind: 'check', results: { 'lake-build': 'unknown', 'gh-read': 'quiet' } });
-    assert.match(mixed.json.summary, /quiet: gh-read; unknown: lake-build; not asked: worker-message, author-edit, git-read, git-push/);
+    assert.match(mixed.json.summary, /quiet: gh-read; unknown: lake-build; not asked: author-edit, git-read, git-push/);
     assert.match(mixed.json.summary, /no step prompted in the latest answers/);
     assert.doesNotMatch(mixed.json.summary, /skipped by the owner/);
   });
 
   it('after a Codex write, says the rules load at startup until a later round is recorded', () => {
-    answer({ runtime: 'codex', kind: 'check', results: { 'worker-message': 'prompted', 'git-push': 'prompted' } });
-    const preview = run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message'));
-    const done = run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message', '--confirm', preview.json.digest));
+    answer({ runtime: 'codex', kind: 'check', results: { 'gh-read': 'prompted', 'git-push': 'prompted' } });
+    const preview = run('write-allowlist', base('--runtime', 'codex', '--steps', 'gh-read'));
+    const done = run('write-allowlist', base('--runtime', 'codex', '--steps', 'gh-read', '--confirm', preview.json.digest));
     assert.equal(done.json.code, 'written');
     const waiting = run('plan', base()).json.record.summary;
-    assert.match(waiting, /allowlist written to \.codex\/rules\/fvs-auto\.rules \(1 allow\)/);
+    assert.match(waiting, /allowlist written to \.codex\/rules\/fvs-auto\.rules \(2 allow\)/);
     assert.match(waiting, /Codex loads rules at startup: run the recheck command in a new session/);
-    assert.match(waiting, /waiting for your approval when the run reaches: worker-message, git-push/);
-    const after = answer({ runtime: 'codex', kind: 'recheck', results: { 'worker-message': 'quiet' } });
+    assert.match(waiting, /waiting for your approval when the run reaches: gh-read, git-push/);
+    const after = answer({ runtime: 'codex', kind: 'recheck', results: { 'gh-read': 'quiet' } });
     assert.doesNotMatch(after.json.summary, /loads rules at startup/);
     assert.match(after.json.summary, /waiting for your approval when the run reaches: git-push/);
+  });
+
+  it('reads a record that an earlier build kept with the retired worker-message step, and does not report that step', () => {
+    answer({ runtime: 'claude', kind: 'check', results: { 'git-push': 'quiet' } });
+    const file = path.join(project, '.formalising', 'auto-fv', 'permissions.json');
+    const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
+    kept.rounds[0].results['worker-message'] = 'prompted';
+    fs.writeFileSync(file, JSON.stringify(kept));
+    const view = run('plan', base()).json.record;
+    assert.equal(view.present, true);
+    assert.doesNotMatch(view.summary, /worker-message/);
+    assert.match(view.summary, /no step prompted in the latest answers/);
   });
 
   it('refuses unknown steps and bad values, and never overwrites a malformed record', () => {
@@ -1118,7 +1229,7 @@ describe('write-allowlist for Codex', () => {
 
   it('refuses without confirmation, then writes only the rules Codex can express', { skip: pushSkip }, () => {
     recordDestination();
-    const steps = 'worker-message,git-push,lake-build,gh-read,git-read';
+    const steps = 'git-push,lake-build,gh-read,git-read';
     const preview = codexAllow(steps);
     assert.equal(preview.json.code, 'confirmation-required');
     assert.equal(fs.existsSync(path.join(project, '.codex')), false);
@@ -1127,9 +1238,9 @@ describe('write-allowlist for Codex', () => {
     const done = codexConfirmed(steps);
     assert.equal(done.json.code, 'written');
     const text = fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8');
-    for (const pattern of ['["ao", "send"]', '["gh", "pr", "view"]', '["gh", "pr", "list"]', '["git", "fetch", "origin"]', '["git", "ls-remote"]', `["node", "${PUSH_SCRIPT}", "--branch"]`]) assert.ok(text.includes(pattern), pattern);
+    for (const pattern of ['["gh", "pr", "view"]', '["gh", "pr", "list"]', '["git", "fetch", "origin"]', '["git", "ls-remote"]', `["node", "${PUSH_SCRIPT}", "--branch"]`]) assert.ok(text.includes(pattern), pattern);
     assert.ok(!text.includes('"git", "push"'), 'no rule names a git push');
-    assert.equal(codexAllow('worker-message').json.code, 'rules-file-conflict', 'a different rule set is refused, not merged');
+    assert.equal(codexAllow('gh-read').json.code, 'rules-file-conflict', 'a different rule set is refused, not merged');
     assert.equal(fs.readFileSync(path.join(project, '.codex', 'rules', 'fvs-auto.rules'), 'utf8'), text, 'the written file is unchanged');
   });
 
@@ -1148,16 +1259,16 @@ describe('write-allowlist for Codex', () => {
   it('never replaces or merges an existing rules file that differs, and says why', () => {
     fs.mkdirSync(path.dirname(rulesFile()), { recursive: true });
     fs.writeFileSync(rulesFile(), 'prefix_rule(pattern=["ls"], decision="allow")\n');
-    const refused = codexAllow('worker-message');
+    const refused = codexAllow('gh-read');
     assert.equal(refused.json.code, 'rules-file-conflict');
     assert.match(refused.json.message, /does not replace or merge it/);
     assert.equal(refused.json.existing, 'prefix_rule(pattern=["ls"], decision="allow")\n');
-    assert.match(refused.json.wouldWrite, /"ao", "send"/);
+    assert.match(refused.json.wouldWrite, /"gh", "pr", "view"/);
     assert.equal(fs.readFileSync(rulesFile(), 'utf8'), 'prefix_rule(pattern=["ls"], decision="allow")\n');
   });
 
   it('a second write with a disjoint selection keeps the first rules and the user\'s own restrictive rule', () => {
-    assert.equal(codexConfirmed('worker-message,gh-read').json.code, 'written');
+    assert.equal(codexConfirmed('gh-read').json.code, 'written');
     const restrictive = '\nprefix_rule(\n    pattern = ["gh", "pr", "view", "--web"],\n    decision = "forbidden",\n)\n';
     fs.appendFileSync(rulesFile(), restrictive);
     const before = fs.readFileSync(rulesFile(), 'utf8');
@@ -1166,14 +1277,14 @@ describe('write-allowlist for Codex', () => {
     assert.equal(codexAllow('git-read', '--confirm', 'anything').json.code, 'rules-file-conflict', 'a confirmation does not override the conflict');
     const after = fs.readFileSync(rulesFile(), 'utf8');
     assert.equal(after, before);
-    assert.ok(after.includes('"ao", "send"') && after.includes('"gh", "pr", "list"') && after.includes('decision = "forbidden"'));
+    assert.ok(after.includes('"gh", "pr", "view"') && after.includes('"gh", "pr", "list"') && after.includes('decision = "forbidden"'));
     assert.match(second.json.message, /write every step you want in one command/);
   });
 
   it('repeating the same write changes nothing', () => {
-    assert.equal(codexConfirmed('worker-message').json.code, 'written');
+    assert.equal(codexConfirmed('gh-read').json.code, 'written');
     const before = fs.readFileSync(rulesFile(), 'utf8');
-    assert.equal(codexAllow('worker-message').json.code, 'unchanged');
+    assert.equal(codexAllow('gh-read').json.code, 'unchanged');
     assert.equal(fs.readFileSync(rulesFile(), 'utf8'), before);
   });
 
@@ -1185,7 +1296,7 @@ describe('write-allowlist for Codex', () => {
     if (script) fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
     return { PATH: bin };
   }
-  const args = (...extra) => base('--runtime', 'codex', '--steps', 'worker-message,gh-read', ...extra);
+  const args = (...extra) => base('--runtime', 'codex', '--steps', 'gh-read,git-read', ...extra);
 
   it('without the codex CLI it writes after confirmation but says plainly that nothing verified it', () => {
     const env = withCodex(null);
@@ -1234,10 +1345,10 @@ describe('write-allowlist for Codex', () => {
   });
 
   it('Codex itself accepts the written file and allows each probe', { skip: !codexOnPath && 'codex CLI not on PATH' }, () => {
-    const done = codexConfirmed('worker-message,gh-read,git-read');
+    const done = codexConfirmed('gh-read,git-read');
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.verified, true);
-    assert.ok(done.json.evaluation.checks.length >= 5);
+    assert.ok(done.json.evaluation.checks.length >= 4);
     assert.match(done.json.evaluation.evaluator.version, /^codex-cli /);
     for (const check of done.json.evaluation.checks) assert.equal(check.decision, 'allow', check.command);
     const file = path.join(project, '.codex', 'rules', 'fvs-auto.rules');
@@ -1297,7 +1408,7 @@ describe('push allow rules that are already in the settings', () => {
     const shared = { model: 'x', permissions: { allow: [LEGACY, 'Bash(ls *)', 'Bash(git push:*)', 'Bash(git status)'], deny: ['Bash(rm *)'] } };
     writeSettings(shared);
     const before = bytes();
-    for (const steps of ['worker-message', 'worker-message,gh-read']) {
+    for (const steps of ['author-edit', 'author-edit,gh-read']) {
       const out = allow(steps);
       assert.equal(out.status, 1, steps);
       assert.equal(out.json.code, 'legacy-push-rules', steps);
@@ -1308,7 +1419,7 @@ describe('push allow rules that are already in the settings', () => {
       assert.equal(out.json.digest, undefined, 'there is nothing to confirm yet');
       assert.equal(bytes(), before, 'the file is byte-identical');
     }
-    const confirmedTry = allow('worker-message', '--confirm', 'whatever');
+    const confirmedTry = allow('author-edit', '--confirm', 'whatever');
     assert.equal(confirmedTry.json.code, 'legacy-push-rules');
     assert.equal(bytes(), before);
   });
@@ -1319,7 +1430,7 @@ describe('push allow rules that are already in the settings', () => {
     const shared = bytes();
     const local = bytes('settings.local.json');
     for (const target of ['shared', 'local']) {
-      const out = allow('worker-message', '--target', target);
+      const out = allow('author-edit', '--target', target);
       assert.equal(out.json.code, 'legacy-push-rules', target);
       assert.deepEqual(out.json.legacyPushRules.map((one) => [one.file, one.rules, one.keeps]), [['.claude/settings.local.json', ['Bash(git push *)'], 1]]);
     }
@@ -1330,25 +1441,25 @@ describe('push allow rules that are already in the settings', () => {
 
   it('works after the owner removes the entries, and then keeps every other entry', () => {
     writeSettings({ permissions: { allow: [LEGACY, 'Bash(ls *)'] } });
-    assert.equal(allow('worker-message').json.code, 'legacy-push-rules');
+    assert.equal(allow('author-edit').json.code, 'legacy-push-rules');
     writeSettings({ permissions: { allow: ['Bash(ls *)'] } });
-    const done = confirmed('worker-message');
+    const done = confirmed('author-edit');
     assert.equal(done.json.code, 'written');
-    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(ao send *)']);
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', EDIT_RULE]);
     assert.equal(run('plan', base()).json.legacyPushRules, undefined);
   });
 
   it('passes a file without such rules, a file that is not JSON (its own refusal comes later), and entries that are not strings', () => {
     writeSettings({ permissions: { allow: [null, 5, { rule: LEGACY }, 'Bash(ls *)'] } });
-    assert.equal(allow('worker-message').json.code, 'confirmation-required');
+    assert.equal(allow('author-edit').json.code, 'confirmation-required');
     writeSettings('{ not json', 'settings.local.json');
-    assert.equal(allow('worker-message').json.code, 'confirmation-required', 'the shared target does not stop on an unreadable local file');
+    assert.equal(allow('author-edit').json.code, 'confirmation-required', 'the shared target does not stop on an unreadable local file');
     assert.equal(lib.legacyPushRules(fs.realpathSync(project)).length, 0);
   });
 
   it('does not stop a Codex write: Claude settings are not what Codex reads', () => {
     writeSettings({ permissions: { allow: [LEGACY] } });
-    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message')).json.code, 'confirmation-required');
+    assert.equal(run('write-allowlist', base('--runtime', 'codex', '--steps', 'gh-read')).json.code, 'confirmation-required');
   });
 });
 
@@ -1361,10 +1472,10 @@ describe('what a confirmation is bound to', () => {
 
   it('the preview names the project root and the exact bytes it is about', () => {
     writeSettings(SAME);
-    const preview = allow('worker-message').json;
+    const preview = allow('author-edit').json;
     assert.equal(preview.projectRoot, fs.realpathSync(project));
     assert.equal(preview.existingSha256, sha());
-    assert.equal(allow('worker-message').json.digest, preview.digest, 'the same state gives the same digest');
+    assert.equal(allow('author-edit').json.digest, preview.digest, 'the same state gives the same digest');
   });
 
   it('refuses a digest after the link in front of the file leads somewhere else, even when both folders hold the same bytes', () => {
@@ -1372,10 +1483,10 @@ describe('what a confirmation is bound to', () => {
     put(a, SAME); put(b, SAME);
     const link = path.join(project, '.claude');
     fs.symlinkSync(a, link);
-    const preview = allow('worker-message').json;
+    const preview = allow('author-edit').json;
     assert.equal(preview.resolvedPath, path.join(fs.realpathSync(a), 'settings.json'));
     retarget(link, b);
-    const out = allow('worker-message', '--confirm', preview.digest);
+    const out = allow('author-edit', '--confirm', preview.digest);
     assert.equal(out.status, 1);
     assert.equal(out.json.code, 'confirmation-required');
     assert.match(out.json.message, /the real path of the file.*Nothing was written.*new digest needs a new yes/s);
@@ -1383,19 +1494,19 @@ describe('what a confirmation is bound to', () => {
     assert.notEqual(out.json.digest, preview.digest);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(a, 'settings.json'), 'utf8')), SAME);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(b, 'settings.json'), 'utf8')), SAME);
-    const done = allow('worker-message', '--confirm', out.json.digest);
+    const done = allow('author-edit', '--confirm', out.json.digest);
     assert.equal(done.json.code, 'written');
     assert.equal(done.json.realPath, path.join(fs.realpathSync(b), 'settings.json'));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(a, 'settings.json'), 'utf8')), SAME, 'the folder that was approved is untouched');
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(b, 'settings.json'), 'utf8')).permissions.allow, ['Bash(ao send *)']);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(b, 'settings.json'), 'utf8')).permissions.allow, [EDIT_RULE]);
   });
 
   it('sees a link that appears where no folder existed at the preview', () => {
     const a = folder('fvs-perm-a-');
-    const preview = allow('worker-message').json;
+    const preview = allow('author-edit').json;
     assert.equal(preview.viaLink, false);
     fs.symlinkSync(a, path.join(project, '.claude'));
-    const out = allow('worker-message', '--confirm', preview.digest);
+    const out = allow('author-edit', '--confirm', preview.digest);
     assert.equal(out.json.code, 'confirmation-required');
     assert.equal(out.json.viaLink, true);
     assert.deepEqual(fs.readdirSync(a), [], 'nothing was written through the new link');
@@ -1403,25 +1514,25 @@ describe('what a confirmation is bound to', () => {
 
   it('refuses a digest after the same file changed, and keeps the change made meanwhile', () => {
     writeSettings({ permissions: { allow: ['Bash(ls *)'] } });
-    const preview = allow('worker-message').json;
+    const preview = allow('author-edit').json;
     writeSettings({ permissions: { allow: ['Bash(ls *)', 'Bash(date)'] }, added: 'meanwhile' });
     const changed = fs.readFileSync(settingsFile(), 'utf8');
-    const out = allow('worker-message', '--confirm', preview.digest);
+    const out = allow('author-edit', '--confirm', preview.digest);
     assert.equal(out.json.code, 'confirmation-required');
     assert.match(out.json.message, /content of the file/);
     assert.equal(out.json.existingSha256, sha());
     assert.equal(fs.readFileSync(settingsFile(), 'utf8'), changed, 'nothing was written');
-    const done = allow('worker-message', '--confirm', out.json.digest);
+    const done = allow('author-edit', '--confirm', out.json.digest);
     assert.equal(done.json.code, 'written');
     assert.equal(readSettings().added, 'meanwhile');
-    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(date)', 'Bash(ao send *)']);
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(ls *)', 'Bash(date)', EDIT_RULE]);
   });
 
   it('refuses a digest when the file was missing at the preview and exists now', () => {
-    const preview = allow('worker-message').json;
+    const preview = allow('author-edit').json;
     assert.equal(preview.existingSha256, null);
     writeSettings({});
-    assert.equal(allow('worker-message', '--confirm', preview.digest).json.code, 'confirmation-required');
+    assert.equal(allow('author-edit', '--confirm', preview.digest).json.code, 'confirmation-required');
     assert.deepEqual(readSettings(), {});
   });
 
@@ -1433,7 +1544,7 @@ describe('what a confirmation is bound to', () => {
     spawnSync('git', ['-C', other, 'remote', 'add', 'origin', `git@github.com:${REPO}.git`]);
     fs.symlinkSync(shared, path.join(project, '.claude'));
     fs.symlinkSync(shared, path.join(other, '.claude'));
-    const args = (root, ...extra) => ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'worker-message', ...extra];
+    const args = (root, ...extra) => ['--project-root', root, '--repo', REPO, '--runtime', 'claude', '--steps', 'author-edit', ...extra];
     const preview = run('write-allowlist', args(project)).json;
     const otherPreview = run('write-allowlist', args(other)).json;
     assert.equal(otherPreview.resolvedPath, preview.resolvedPath, 'both roots lead to the same real file');
@@ -1456,7 +1567,7 @@ describe('what a confirmation is bound to', () => {
     const [a, b] = [folder('fvs-perm-a-'), folder('fvs-perm-b-')];
     const link = path.join(project, '.codex');
     fs.symlinkSync(a, link);
-    const codex = (...extra) => run('write-allowlist', base('--runtime', 'codex', '--steps', 'worker-message', ...extra));
+    const codex = (...extra) => run('write-allowlist', base('--runtime', 'codex', '--steps', 'gh-read', ...extra));
     const preview = codex().json;
     assert.equal(preview.code, 'confirmation-required');
     assert.equal(preview.projectRoot, fs.realpathSync(project));
@@ -1491,40 +1602,39 @@ describe('recheck', () => {
   });
 
   it('is what a plan with a record points to, so the resume path and the recheck guidance agree', () => {
-    answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted' } });
+    answer({ runtime: 'claude', kind: 'check', results: { 'author-edit': 'prompted' } });
     const plan = run('plan', base()).json;
     assert.match(plan.message, /do not run the check again/);
     assert.match(plan.message, /recheck command/);
   });
 
   it('repeats the probes of the steps that last prompted, the push step included, and says how to record them', { skip: pushSkip }, () => {
-    answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted', 'gh-read': 'prompted', 'git-read': 'quiet', 'git-push': 'prompted', 'author-edit': 'unknown' } });
+    answer({ runtime: 'claude', kind: 'check', results: { 'gh-read': 'prompted', 'git-read': 'quiet', 'git-push': 'prompted', 'author-edit': 'unknown' } });
     const out = recheck();
     assert.equal(out.status, 0);
     assert.equal(out.json.mode, 'recheck');
-    assert.deepEqual(ids(out), ['worker-message', 'gh-read', 'git-push']);
+    assert.deepEqual(ids(out), ['gh-read', 'git-push']);
     const byId = Object.fromEntries(out.json.steps.map((s) => [s.id, s]));
-    assert.equal(byId['worker-message'].probes.length, 1);
     assert.equal(byId['gh-read'].probes.length, 2);
     assert.deepEqual(byId['git-push'].probes, [{ tool: 'Bash', command: `${PROGRAM} --branch fvs/.permission-check` }]);
     assert.equal(byId['git-push'].skipped, undefined, 'the push probe is harmless, so it is repeated like the others');
     assert.match(out.json.message, /"kind":"recheck"/);
     assert.match(out.json.message, /Codex.*new session.*trusted.*read when a session starts/);
-    assert.match(out.json.summary, /prompted: worker-message, gh-read, git-push/);
+    assert.match(out.json.summary, /prompted: gh-read, git-push/);
   });
 
   it('follows the latest answer per step, so a step answered quiet in a later round is not repeated', () => {
-    answer({ runtime: 'claude', kind: 'check', results: { 'worker-message': 'prompted', 'gh-read': 'prompted' } });
-    answer({ runtime: 'claude', kind: 'recheck', results: { 'worker-message': 'quiet' } });
+    answer({ runtime: 'claude', kind: 'check', results: { 'git-read': 'prompted', 'gh-read': 'prompted' } });
+    answer({ runtime: 'claude', kind: 'recheck', results: { 'git-read': 'quiet' } });
     assert.deepEqual(ids(recheck()), ['gh-read']);
   });
 
   it('takes the steps from --steps instead, refuses an unknown one, and says when there is nothing to repeat', () => {
-    answer({ runtime: 'codex', kind: 'check', results: { 'worker-message': 'quiet', 'gh-read': 'quiet' } });
+    answer({ runtime: 'codex', kind: 'check', results: { 'git-read': 'quiet', 'gh-read': 'quiet' } });
     const none = recheck();
     assert.deepEqual(none.json.steps, []);
     assert.match(none.json.message, /nothing to repeat.*--steps/);
-    assert.deepEqual(ids(recheck('--steps', 'worker-message,git-read')), ['worker-message', 'git-read']);
+    assert.deepEqual(ids(recheck('--steps', 'author-edit,git-read')), ['author-edit', 'git-read']);
     assert.equal(recheck('--steps', 'nope').json.code, 'unknown-step');
   });
 
@@ -1783,7 +1893,7 @@ describe('the permissions page', () => {
     const text = page();
     assert.match(text, /\(https:\/\/developers\.openai\.com\/codex\/rules\)/);
     assert.match(text, /codex-cli 0\.166\.0/);
-    assert.match(text, /\n## What was tested\n[\s\S]*Unit tests[\s\S]*codex execpolicy check[\s\S]*One live probe: the message step[\s\S]*Not observed:/);
+    assert.match(text, /\n## What was tested\n[\s\S]*Unit tests[\s\S]*codex execpolicy check[\s\S]*No live probe of a worker-message command is kept[\s\S]*Not observed:/);
     assert.match(text.replace(/\s+/g, ' '), /Lake evaluates your project's own lakefile and can write build caches, and git runs any hook you configured/);
     assert.doesNotMatch(text, /harmless instance/);
   });

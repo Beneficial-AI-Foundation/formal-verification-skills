@@ -3,8 +3,8 @@
 How to get from a clean host to a recorded auto-init state when you are new to functional-correctness
 verification: what you install yourself, how to check each tool, what each compatibility verdict means
 and what the single next step is, how to keep `.formalising/` out of git, and which operation, tuple
-and platforms have a recorded run. It also covers running the auto track under Agent Orchestrator and
-Codex: permission and command habits that keep a run from stalling (with a link to the permissions page), worktrees and per-worktree installs,
+and platforms have a recorded run. It also covers running the auto track in your development environment
+(Agent Orchestrator and Orca are the examples) and under Codex: permission and command habits that keep a run from stalling (with a link to the permissions page), worktrees and per-worktree installs,
 the project config and the model rule, Codex trust, which steps only the owner runs, a `/goal` wording
 that accepts an owner gate as done, rule changes reaching live sessions, and how reports link
 artifacts. It also says what the five probes add, which stages need them (none is needed for setup or
@@ -22,7 +22,9 @@ and its qualification report identify the candidate; a version string, a floatin
 marketplace/npm installation does not. Record remaining runtime qualifications honestly. Whole-libcrux
 extraction and a full pilot are separate from preparing this installation.
 
-1. **Prepare the host.** Install AO and make `ao` available. Keep the selected harness's existing
+1. **Prepare the host.** Install your development environment (for example Agent Orchestrator or Orca)
+   and check that it can start workers in their own worktrees. FVS installs none of it and checks for none.
+   Keep the selected harness's existing
    authentication and inspect its actual roles, model/effort and permissions. The source installer
    needs Node and Git; the Claude actor permission helper, which only the strict lane uses, also needs
    Python 3 and `/usr/bin/git`. The package's declared Node floor is not a tested SWVF compatibility matrix.
@@ -64,19 +66,26 @@ extraction and a full pilot are separate from preparing this installation.
    install an unpublished source pin. Exact registry prereleases are accepted by `--pi-version`
    only when the requested version is actually published. Plugin users need the actual plugin root
    and runtime role/capability checks; a stable catalog entry is not an rc3 pin.
+
+   **Install FVS where the agents run.** The auto commands run FVS's scripts from the folder the installer
+   wrote for the runtime: the user's home folder for a global install, the worktree for a local one. An
+   agent in a sandbox or container sees only that sandbox's files, so install FVS there: in the sandbox's
+   home with a global install, or in each worktree with a local one. A worktree does not share an ignored
+   local install, because a worker's worktree is a fresh checkout that holds only committed files.
 4. **Verify every actor installation.** Reload/start the normal session when the owner is ready.
    Read its installed version and manifest, compare the actual scripts to the selected source, and
-   check role/tool access from that actor. Repeat for each AO worker worktree: ignored local installs
-   do not propagate through Git ("Agent Orchestrator setup" below covers worktree installs). To share
+   check role/tool access from that actor. Repeat for each worker worktree: ignored local installs
+   do not propagate through Git ("Agent Orchestrator setup" and "Orca setup" below cover worktree
+   installs). To share
    one local install instead, link each entry the install put under `.claude`, one by one, into a
    real per-worktree `.claude` folder. Linking the project's shared
    `settings.json` this way is fine: it holds the hooks, status line and project-wide rules, like a
    committed project settings file. Never link `.claude` itself or `settings.local.json`: that file
    receives each actor's permission grant, so it must stay a real, single-link file in each worktree
-   (AO writes it there). The actor permission helper refuses a linked `.claude` folder or a linked
-   `settings.local.json`, because a grant written there would reach every worktree that shares it.
-   AO created this nested layout from per-entry links on AO 0.14.10 in a throwaway project, and the
-   helper then verified the grant; recheck on another AO version. Rules kept in the main clone's
+   (Agent Orchestrator writes it there). The actor permission helper refuses a linked `.claude` folder or a
+   linked `settings.local.json`, because a grant written there would reach every worktree that shares it.
+   "Agent Orchestrator setup" below says how this nested layout was checked; recheck it on your
+   environment. Rules kept in the main clone's
    `settings.local.json` stop reaching worktrees under this layout, and only worktrees created after
    the change get it. Keep one fixed trusted engine identity across the run. Local shell
    paths resolve to the selected installation even from a nested cwd; plugin resources remain rooted
@@ -166,7 +175,7 @@ Known issues seen in rc1 and still present in rc3, untested in v2:
 
 Controller permissions in auto mode:
 - Before the run, the owner approves the controller's commands in the controller's own session. These are
-  the FVS driver/CLI, `ao`, `git` and the pinned Lean tools. `/fvs:auto-init` checks which steps of the run
+  the FVS driver/CLI, your environment's worker commands, `git` and the pinned Lean tools. `/fvs:auto-init` checks which steps of the run
   prompt on this machine and, only after the owner's yes, writes a minimal project allowlist for those
   steps and, for a push, the one rule that names the FVS push command (`fvs-auto-push.mjs`, which pushes one
   branch under the run's namespace to the destination recorded at init; it is a cooperative guard with hardening and
@@ -177,7 +186,7 @@ Controller permissions in auto mode:
   the push command, what FVS never allows and how to fix a step that keeps prompting. `auto-seats.md` says which seat (owner, orchestrator or worker) runs
   each operation. "Permissions and command rules" below gives the general habits for every session.
 - Run one simple, auditable command per step: one driver or CLI operation with its `--input` file, one
-  `ao` call or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
+  command of your environment's CLI or one `git` call. Compound commands (`&&`, `;`, pipes, `cd` plus a command, subshells) can
   trigger a permission prompt, and an unattended prompt may be aborted.
 - A command denied before it started had no effect: re-read state and hold that step. Any other
   abort, or an outcome you cannot establish, is uncertain: the effect may have run. Keep its marker,
@@ -194,8 +203,9 @@ initialization has native Git side effects and needs its own explained setup per
 
 ## V2 run policy and runner boundary
 
-For a new v2 project, read `auto-execution.md` for optional budgets, optional memory, cancellation and
-small-proof progress/handoff. Stock AO may run locally or on the user's cloud host; no Linux-first
+For a new v2 project, read `auto-execution.md` for optional budgets and optional memory. For
+cancellation, replacement and small-proof progress, follow its "Cancel or replace a worker on the
+default route". Your development environment may run locally or on a cloud host; no Linux-first
 choice is imposed. Orchestration/research and pinned acquisition are network-enabled through the
 configured tools and grants. The profile below only detects tools.
 
@@ -203,7 +213,7 @@ The confinement/tool matrix below qualifies a particular probe-inventory operati
 blanket SWVF networking or nested-sandbox requirement. The v2 compiler path uses the actual trusted
 host with pinned inputs and strict checker integrity, and needs its own real qualification. Keep
 per-tool availability/distribution constraints and unsupported tuples explicit. Neither an installed
-version line nor unit fixtures establish full AO/Lean factory or cloud support.
+version line nor unit fixtures establish full orchestrator/Lean factory or cloud support.
 
 ## Prerequisites you install yourself
 
@@ -213,7 +223,8 @@ example above is an explicit owner-run step after permission for its local write
 
 | Prerequisite | Official source | Version check | What the profile reads |
 |---|---|---|---|
-| Agent Orchestrator | https://github.com/OrchestratorInc/agent-orchestrator/releases and https://docs.orchestrator.inc/installation | `ao --version` | Only that `ao` is on PATH. FVS records no tested Agent Orchestrator version, so a version line shows that the CLI runs and nothing more. In the macOS app bundle the CLI is `Contents/Resources/daemon/ao`: put its directory on PATH. |
+| Agent Orchestrator (one example of a development environment) | https://github.com/OrchestratorInc/agent-orchestrator/releases and https://docs.orchestrator.inc/installation | `ao --version` | Nothing: the profile checks no development environment. FVS records no tested Agent Orchestrator version, so a version line shows that the CLI runs and nothing more. In the macOS app bundle the CLI is `Contents/Resources/daemon/ao`: put its directory on PATH. |
+| Orca (another example, not tested) | Orca's own installation documentation | `orca --version` | Nothing: the profile checks no development environment. FVS records no run in Orca. On Linux outside an Orca terminal the CLI is `orca-ide`, because a bare `orca` there can be the GNOME screen reader. |
 | Rust toolchain | https://rustup.rs | `rustup --version`, `cargo --version`, `rustc -vV` | `cargo` and `rustc` on PATH, any `rust-toolchain` pin, and `rustc -vV` run in the crate directory, where a pinned toolchain applies. |
 | Lean through elan | https://github.com/leanprover/elan | `elan --version`, `lake --version` | `lean-toolchain`, a `lakefile.toml` or `lakefile.lean`, and `lake --version` run in the project root. |
 | Aeneas and Charon | https://github.com/AeneasVerif/aeneas/releases | `aeneas -version`, `charon version` | The Aeneas revision your project pins, and the `aeneas` and `charon` executables for this host. |
@@ -272,7 +283,6 @@ Add `--format json` for the same result with the raw evidence. The items are:
 | Item | What it checks |
 |---|---|
 | `host` | Whether this host's target has a recorded confined run. It is never green, because the evidence covers one operation. |
-| `ao` | The Agent Orchestrator CLI. |
 | `rust` | The Rust toolchain and its host target. |
 | `lean` | The Lean project files and Lake. |
 | `aeneas` | The Aeneas pin, the installed Aeneas and Charon, and how they compare with the tested tuples. |
@@ -290,7 +300,7 @@ lines" below explains them.
 | `supported-and-tested` | An exact tested tuple on this host, for the recorded operation only, with probe-aeneas and every helper at the tested version. The profile names the operation, tuple and platform it covers. |
 | `available-but-unverified` | Present, but no recorded FVS run covers it. The reason says exactly why. This is not a failure. A reason that starts with `warning:` (pins that contradict each other, or a Charon or Lean that contradicts a tested Aeneas revision) is also this verdict and never stops setup. |
 | `incompatible` | A concrete mismatch. Only the `probe` item prints it, and it never stops setup. Either `translation.json` records an Aeneas revision that was tested with a different Charon or Lean, or the project is on a tested tuple and probe-aeneas or one of its helpers is at a different version than the tested one, or this host cannot confine the run. Being absent from the tested list is never enough. |
-| `missing` | A component is actually absent. For `ao`, `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
+| `missing` | A component is actually absent. For `rust`, `lean` and `aeneas` this stops `/fvs:auto-init`. A missing `probe` is only noted, because no probe is needed for setup or extraction. |
 | `unsupported-platform` | This host's target has no recorded confined run, or no official probe-aeneas asset. Setup and extraction go on here. "Probes and stage lines" below says what the stages then need. |
 | `not-extracted-yet` | The expected state of a fresh project: no `translation.json` and no Aeneas-generated Lean file yet. This is not a failure. |
 
@@ -299,7 +309,6 @@ or a second sentence, the cell shows it:
 
 | Situation | Item | Next step |
 |---|---|---|
-| `ao` is not on PATH | `ao` | Install Agent Orchestrator and put its ao CLI on PATH, then rerun the profile. |
 | `cargo` or `rustc` is not on PATH | `rust` | Install Rust with rustup (https://rustup.rs), then rerun the profile. |
 | The Rust version could not be checked on this host | `rust` | Run rustc -vV in the crate directory yourself to confirm the toolchain. |
 | `lean-toolchain` is missing or empty | `lean` | Add a lean-toolchain file to the project root pinning the Lean version your Aeneas backend uses. |
@@ -348,7 +357,8 @@ Each probe has one status in the `probes:` list:
 | `missing` | Not found. A `rust-analyzer` that is only the rustup proxy and fails to run counts as missing. |
 | `not-checked` | The check did not run, and the reason is printed: an unreadable `lean-toolchain`, a refused path override, or no read-only confinement on this host to run the `--version` check in. A stage that needs it runs reduced, without it, until the check can run. |
 
-The stages `auto-top-specs` and `auto-execute` each need `ao` and `lean` to have a route at all. A lost
+The stages `auto-top-specs` and `auto-execute` each need `lean` to have a route at all. The profile checks
+no development environment: which one starts the workers is your choice. A lost
 probe does not stop them: the stage runs without that probe's output, and the output is labelled reduced.
 Strict-lane proof acceptance (freeze, check, accept) needs a verified Lean graph from `probe-lean` and a
 Rust identity confirmed by `probe-aeneas` and `probe-rust`, which in turn needs `scip` and
@@ -361,8 +371,8 @@ The `stages:` list has one line for each stage, and the line starts with one of 
 |---|---|
 | `full` | Every probe is qualified for this toolchain tuple. |
 | `ready, unverified` | Every probe is present and usable, and some are not qualified for this toolchain tuple. Their output is used and labelled unverified: a warning, not a stop. |
-| `ready, reduced` | `ao` and `lean` are present, and only probes are missing, not checked or unusable. The stage runs without them, and its output is labelled reduced. The line names each lost probe and what that costs, says reduced output never promises proof acceptance, and ends with `To restore, the owner can ...` and `(warning, not a stop)`. |
-| `no route here` | `ao` or `lean` is missing, or the recorded profile has no usable status for a probe. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices. |
+| `ready, reduced` | `lean` is present, and only probes are missing, not checked or unusable. The stage runs without them, and its output is labelled reduced. The line names each lost probe and what that costs, says reduced output never promises proof acceptance, and ends with `To restore, the owner can ...` and `(warning, not a stop)`. |
+| `no route here` | `lean` is missing, or the recorded profile has no usable status for a probe. The line names what, then `first, the owner must ...` or `first, the agent must ...`: the first step and who does it. The owner installs software or fixes the host. The agent only reruns `/fvs:auto-init` with the recorded choices. |
 
 The recorded profile changes only when `init-state` runs again, so each step ends by naming that rerun.
 Read the stage line before you start a stage. A `ready, reduced` line says what you lose and who can
@@ -444,12 +454,13 @@ The notes below apply only in the setup each one names. If it is not yours, skip
 
 - **Describe commands in words when you write to another session (optional note).** This applies only if
   you wrote a permission rule that asks before any command starting with a wildcard. Such a rule can
-  match words inside quoted text, such as the message of `ao send`. If that message mentions a delete, a
-  download or a version-control command, the host may prompt although nothing runs it. An allow rule for
-  `ao *` does not help, because an ask rule takes precedence over an allow rule. Say what should happen
-  in plain words ("remove the file", "fetch the branch"), and call `ao` itself directly, not through a
-  wrapper, so the rule sees the command it was written for. `ao send` has no option to read its message
-  from a file.
+  match words inside quoted text, such as the message you send to a worker. If that message mentions a
+  delete, a download or a version-control command, the host may prompt although nothing runs it. An allow
+  rule for your environment's message command (for example `ao *`) does not help, because an ask rule
+  takes precedence over an allow rule. Say what should happen in plain words ("remove the file", "fetch
+  the branch"), and call your environment's command itself directly, not through a wrapper, so the rule
+  sees the command it was written for. Where that command has no option to read its message from a file
+  (`ao send` has none), keep the message plain.
 - **Read pull requests without `gh api` (optional note).** This applies only if your permission rules or
   your project's own rules block `gh api`. Read a pull request with `gh pr view` and `gh pr diff`
   instead. `/fvs:aeneas-extract`'s read-only known-issues search uses `gh api` with an explicit read
@@ -457,7 +468,7 @@ The notes below apply only in the setup each one names. If it is not yours, skip
   records the search as `not checked`.
 - **A command-rewriting hook changes what a rule sees (optional note).** Some setups install a hook that
   rewrites every shell command, for example to shorten its output; RTK is one such tool. The permission
-  layer then sees the rewritten command. An allow rule written for the original form, such as `ao *`,
+  layer then sees the rewritten command. An allow rule written for the original form, such as `git fetch *`,
   no longer covers it, and every ask rule anchored on the start of a command needs a twin for the
   rewritten form. Such hooks have also been seen cutting JSON output short, which breaks any step that
   parses it. If a result looks cut off, exempt that command from the hook or switch the hook off for
@@ -465,9 +476,10 @@ The notes below apply only in the setup each one names. If it is not yours, skip
 
 ## Agent Orchestrator setup
 
-Stock Agent Orchestrator (AO) needs nothing from FVS except the `ao` command, which the profile checks.
-The settings below belong to AO and to your project. Run `ao <command> --help` on your version: it is
-the authority, and this section can lag behind it.
+Agent Orchestrator (AO) is one environment the auto track runs in; FVS needs nothing from AO beyond the
+capabilities in `auto-seats.md`, and checks for none. The settings below belong to AO and to your
+project. Run `ao <command> --help` on your version: it is the authority, and this section can lag behind
+it.
 
 **Worktrees.** Every worker runs in its own linked git worktree. Ignored local files do not follow it: a
 project-level FVS install (the `.claude` or `.codex` folder), `.formalising/` and local settings live
@@ -523,14 +535,49 @@ session in plain words that the rules changed and that it should re-read them wi
 --json`, or restart it. A session re-reads the saved rules the same way when it resumes and after its
 context is compacted.
 
+## Orca setup
+
+Orca is another environment the auto track can run in. FVS needs nothing from Orca beyond the capabilities
+in `auto-seats.md`, and checks for none. Everything in this section is an example, not tested: FVS records
+no run in Orca, and these commands are read from Orca's own guides (`orca skills get orchestration` and
+`orca skills get orca-cli`) and from `orca orchestration worker-start --help`; they were not run for this
+guide. Run `orca <command> --help` on your version: it is the authority.
+
+**Worktrees.** Orca gives each worker its own git worktree. `orca worktree show
+--worktree SELECTOR --json` and `orca worktree ps --json` give each path. A project-level FVS install and
+`.formalising/` live only in the worktree where they were made, as in any environment: install FVS once
+for your user account (`bin/install.js` with `--global`), or repeat the local install in each worktree.
+
+**Starting a worker.** `orca orchestration worker-start --spec-file BRIEF --worktree new-top-level --repo
+id:REPO --name NAME --agent claude --base-branch REF` starts one worker in a new worktree cut from the
+working branch. Add `--model` and `--effort` only when you want to choose them. The worker ends with
+`worker_done`, which wakes the orchestrator; do not poll. A worker started with `orca worktree create ...
+--prompt` reports nothing back: read it with `orca agent read ID --json`.
+
+**Base of new worktrees.** `--base-branch REF` on the command that creates the worktree, or once for the
+project with `orca repo set-base-ref --repo id:REPO --ref origin/BRANCH`.
+
+**Messages.** `orca orchestration send --to dispatch:ID --subject TOPIC --body TEXT`. A working worker gets
+the message when its current turn ends, and a finished worker gets it as a follow-up task. The Orca guide
+names no interrupt command, so redirect a worker by stopping it and starting a replacement.
+
+**Reviewer.** The Orca guide names no built-in pull request reviewer. Check your version.
+
+**Sandboxes.** A layout that keeps the shared filesystem the workflows assume is one docker sandbox per
+project, with the orchestrator and all its workers in it and each worker in its own worktree. Install FVS
+in the sandbox's home folder with the global install ("Install FVS where the agents run" above), so every
+worktree in the sandbox finds it. If your workers run apart from the orchestrator's filesystem, see
+`auto-seats.md`, "Reports".
+
 ## Codex trust
 
 This applies when a seat runs Codex. What follows was seen in one setup; re-check it on your version.
 - Skills load without trust. A project-level `.codex` install (its config and hooks) loads only when the
   project's exact path is trusted in `~/.codex/config.toml`: a `[projects."<absolute path>"]` table with
   `trust_level = "trusted"`. The owner makes that edit; FVS never writes it.
-- An AO worktree resolves to its main repository root for this purpose, so one entry covers every
-  worktree of the project. A parent folder does not pass trust to a child path, there is no wildcard
+- In the setup this was seen in (Agent Orchestrator), a worktree resolves to its main repository root for
+  this purpose, so one entry covers every worktree of the project. In another environment, check that each
+  worktree path is trusted. A parent folder does not pass trust to a child path, there is no wildcard
   form, and the `-c` command-line option cannot grant trust.
 - A project hook also needs its own trusted hash: a
   `[hooks.state."<clone>/.codex/hooks.json:session_start:0:0"]` table holding `trusted_hash`. A reinstall
@@ -542,8 +589,8 @@ This applies when a seat runs Codex. What follows was seen in one setup; re-chec
 Some steps belong to the owner alone. The owner types them in a terminal of their own; an orchestrator or
 worker only prepares them or hands over the exact command. `auto-seats.md` lists every operation by seat.
 - Installing FVS in a scope, and installing the prerequisites.
-- Changing host trust or permissions: the Codex trust entry, the project's AO config
-  (`ao project set-config`), a permission mode.
+- Changing host trust or permissions: the Codex trust entry, your environment's project or permission
+  settings, a permission mode.
 - Recording the scope agreement. The orchestrator drafts it with `fvs-auto-agreement.mjs`, which prints
   the fence, its digest and the one record command. The owner compares the digest with what they
   approved, then runs that command. A later agreement for a changed scope needs the overwrite
@@ -571,7 +618,7 @@ already started repeating itself, clear the goal and set it again with this word
 
 ## Reports, links and owner questions
 
-- **Links and paths.** A link that only one app opens, for example an in-app `ao://` link, is always
+- **Links and paths.** A link that only one app opens, for example an in-app link of your development environment, is always
   followed by the plain absolute path of the file it points to. Every report and every next action that
   points to an artifact gives that path.
 - **Owner questions in plain words.** Offer a short menu and leave room for free text. Each option says
