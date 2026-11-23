@@ -80,14 +80,14 @@ runtime qualification or a whole-library verification result.
 - The trust section of a proof pull request says `not accepted (reason)` for a build-check receipt
   that the engine does not count, and still lists the axioms.
 
-- `/fvs:auto-init` checks permissions before the run, while you are at the keyboard. It sends a
-  harmless worker message, makes one author edit and build, reads pull requests, runs `git
-  ls-remote` and `git fetch`, and runs the push command with a branch name that cannot exist, so
-  nothing is pushed. You tell it which steps stopped and asked; with your yes it writes a minimal
-  project allowlist for those steps. It never writes a rule for a GitHub comment or review, for
-  marking a pull request ready, for a merge, or for a plain `git push`. It does not check pull
-  request creation or editing: approve those yourself. The init summary has a `Permissions:` line
-  that names the steps that will wait for your approval.
+- `/fvs:auto-init` checks permissions before the run, while you are at the keyboard. It makes one
+  author edit and build, reads pull requests, runs `git ls-remote` and `git fetch`, and runs the
+  push command with a branch name that cannot exist, so nothing is pushed. You tell it which steps
+  stopped and asked; with your yes it writes a minimal project allowlist for those steps. It never
+  writes a rule for a GitHub comment or review, for marking a pull request ready, for a merge, or
+  for a plain `git push`. It does not check pull request creation or editing: approve those
+  yourself. The init summary has a `Permissions:` line that names the steps that will wait for your
+  approval.
 - Workers and the orchestrator push with one command, `scripts/fvs-auto-push.mjs --branch
   fvs/<name>`. It pushes that one branch to the destination that `/fvs:auto-init` recorded and
   refuses a branch outside the recorded namespace, a changed destination, and a git setting that
@@ -116,7 +116,8 @@ runtime qualification or a whole-library verification result.
 - The guides say: take test vectors from the repository or an official source and add a negative
   control; build before you commit and keep the exit status; pass the installed FVS path and
   version to every worker; list the public API items and test the `recall` example; redirect a busy
-  AO worker with `ao send --steer`; and keep AO's native reviewer off when you do not want it.
+  worker (in Agent Orchestrator, with `ao send --steer`); and keep an automatic reviewer off when
+  you do not want it.
 
 ### Changed
 
@@ -135,6 +136,16 @@ runtime qualification or a whole-library verification result.
 - The setup guide's tested matrix no longer names a pilot tuple that no real project uses. It
   lists the tuple the rc3 run used, marked unverified until a recorded confined run, and says that
   FVS does not choose your tools: your project pins its own Aeneas, Charon and Lean.
+- The auto track no longer requires Agent Orchestrator. It works in any environment that gives the
+  orchestrator worker sessions in their own git worktrees that it can message. The guides name Agent
+  Orchestrator and Orca as examples; the Orca commands are marked example, not tested.
+- The setup profile no longer checks for `ao`, so a missing `ao` no longer stops `/fvs:auto-init`. A
+  profile recorded by an earlier build that holds an `ao` item keeps it, and it never stops setup.
+- The permission check at `/fvs:auto-init` no longer probes `ao send` and writes no rule for it. If you
+  use Agent Orchestrator and `ao send` prompts in your orchestrator session, add that rule yourself.
+  A Codex project whose rules file holds the old rule must delete that file once: init refuses to
+  replace a rules file that differs, as the permissions page says.
+- The strict lane still needs the Agent Orchestrator CLI in this release.
 
 ### Fixed
 
@@ -161,6 +172,8 @@ runtime qualification or a whole-library verification result.
   read from their documentation and not observed.
 - The permission check shows which steps prompted in your session. It does not predict every
   command the run uses later.
+- The Orca commands in the guides were read from Orca's own guides and help output and have not been
+  run. No run of the auto track in an environment other than Agent Orchestrator is recorded.
 
 ## [3.0.0-rc2] - 2026-11-17
 
